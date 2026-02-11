@@ -223,13 +223,33 @@ fun main( ) = KoolApplication{
                                     Text("${stack.item.name}") {
                                         modifier.font(sizes.smallText)
                                     }
-                                    
+
                                     Text("${stack.count}") {
                                         modifier.font(sizes.smallText)
                                     }
                                 }
                             }
                         }
+                    }
+                    Button("Получить зелье") {
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick{
+                                val  idx = game.selectedSlot.value
+                                val  updated = putIntoSlot(game.holder.value, idx, HEALING_POTION, 3)
+
+                                game.holder.value = updated
+                            }
+                    }
+                    Button("Деревянный меч") {
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick{
+                                val  idx = game.selectedSlot.value
+                                val  updated = putIntoSlot(game.holder.value, idx, WOOD_SWORD, 1)
+
+                                game.holder.value = updated
+                            }
                     }
                 }
             }
