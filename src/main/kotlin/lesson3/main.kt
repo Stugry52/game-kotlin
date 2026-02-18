@@ -60,7 +60,7 @@ class GameState{
     val playerId = mutableStateOf("Player")
     val hp = mutableStateOf(100)
     val gold = mutableStateOf(0)
-    val potionTicksLeft = mutableStateOf(0)
+    var potionTicksLeft = mutableStateOf(0)
 
     // Хотбар на 9 слотов, List<ItemStack?> - в ячейку хотбара можно положить только стак какго-то предмета ил null (пусто)
     val holder = mutableStateOf(
@@ -128,7 +128,7 @@ data class B(val x: Int)
 
 data class ItemUsed(
     override val playerId: String,
-    val itemId: String,
+    val itemId: String
 ): GameEvent
 
 data class DamageDealt(
@@ -147,6 +147,11 @@ data class QuestStepCompleted(
     override val playerId: String,
     val questId: String,
     val stepIndex: Int
+): GameEvent
+
+data class ItemDropped(
+    override val playerId: String,
+    val itemId: String
 ): GameEvent
 
 // (GameEvent) -> Unit - функция, принимающая GameEvent возвращает Unit (ничего) по умолчанию
@@ -234,7 +239,7 @@ fun putIntoSlot(
     val current = newSlots[slotIndex]    // Текущий стак в слоте (может быть null)
 
     if (current == null){
-        // Если сллот куда хотим положить - пуст, создаем в нем новый стак
+        // Если слот куда хотим положить - пуст, создаем в нем новый стак
         val count = minOf(addCount, item.maxStack)
         newSlots[slotIndex] = ItemStack(item, count)
         val leftOver = addCount - count
@@ -260,7 +265,7 @@ fun useSelected(
 ): Pair<List<ItemStack?>, ItemStack?>{
     // Пара значений нужна дял того чтобы:
     // 1 функция могла вернуть 2 результата сразу, а не один
-    // Мы сейчас возвращаем 2 значения, а именно: новый хотбар + скольеко предметов в него не влезло в него
+    // Мы сейчас возвращаем 2 значения, а именно: новый хотбар + сколько предметов в него не влезло в него
 
     val newSlots = slots.toMutableList()
     val current = newSlots[slotIndex] ?: return Pair(newSlots, null)
@@ -275,6 +280,31 @@ fun useSelected(
     }
 
     return Pair(newSlots, current)
+}
+
+fun dropItem(
+    bus: EventBus,
+    playerId: String,
+    itemId: String,
+    slots: List<ItemStack?>,
+    slotIndex: Int): List<ItemStack?>{
+
+    val newSlots = slots.toMutableList()
+    val current = newSlots[slotIndex]
+
+    if(current == null){
+        println("Пусто братан, тебе дальше")
+        return newSlots
+    }
+
+    if (current.item.id == itemId){
+
+        newSlots[slotIndex] = null
+    }
+
+    bus.publish(ItemDropped(playerId, itemId))
+
+    return newSlots
 }
 
 fun pushLog(game: GameState, text: String){
@@ -295,6 +325,7 @@ fun main() = KoolApplication{
             is DamageDealt -> "${event.playerId} Нанес ${event.amount}, урон ${event.targetId}"
             is EffectApplied -> "Эффект ${event.effectId} наложен на ${event.ticks} тиков"
             is QuestStepCompleted -> "Шаг ${event.stepIndex + 1} квеста ${event.questId}"
+            is ItemDropped -> "Предмет был выброшен: ${event.itemId}, но вы можете ещё подобрать его"
         }
 
         pushLog(game, "[${event.playerId}] $line")
@@ -302,20 +333,6 @@ fun main() = KoolApplication{
     // Сцена UI
     addScene {
         defaultOrbitCamera()
-
-        addColorMesh {
-            generate {
-                cube{ colored()}
-            }
-            shader = KslPbrShader{
-                color { vertexColor() }
-                metallic(1f)
-                roughness(0.8f)
-            }
-            onUpdate{
-                transform.rotate(45f.deg * Time.deltaT, Vec3f.Z_AXIS)
-            }
-        }
 
         lighting.singleDirectionalLight {
             setup(Vec3f(-1f,-1f,-1f))
@@ -419,31 +436,80 @@ fun main() = KoolApplication{
                         }
                     }
                 }
-                Button("Получить зелье") {
-                    modifier
-                        .margin(end = 8.dp)
-                        .onClick{
-                            val pid = game.playerId.value
-                            val idx = game.selectedSlot.value
-                            val (updated, leftOver) = putIntoSlot(game.holder.value, idx, HEALING_POTION, 3)
+                Row {
+                    Button("Получить зелье") {
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick {
+                                val pid = game.playerId.value
+                                val idx = game.selectedSlot.value
+                                val (updated, leftOver) = putIntoSlot(game.holder.value, idx, HEALING_POTION, 3)
 
-                            game.holder.value = updated
+                                game.holder.value = updated
 
-                            bus.publish(ItemAdded(pid, HEALING_POTION.id, 6, leftOver))
-                        }
+                                bus.publish(ItemAdded(pid, HEALING_POTION.id, 6, leftOver))
+                            }
+                    }
+                    Button("Деревянный меч") {
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick {
+                                val pid = game.playerId.value
+                                val idx = game.selectedSlot.value
+                                val (updated, leftOver) = putIntoSlot(game.holder.value, idx, WOOD_SWORD, 1)
+
+                                game.holder.value = updated
+
+                                bus.publish(ItemAdded(pid, HEALING_POTION.id, 6, leftOver))
+                            }
+                    }
+                    Button("Использовать предмет") {
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick {
+                                val slots = game.holder.use()
+                                val selected = game.selectedSlot.use()
+                                val pid = game.playerId.value
+                                val idx = game.selectedSlot.value
+
+                                useSelected(slots, selected)
+
+                                if (selected != nul
+                                    l) {
+                                    bus.publish(ItemUsed(pid, WOOD_SWORD.id))
+                                } else if (id == HEALING_POTION) {
+                                    game.potionTicksLeft.value += 5
+                                    bus.publish(ItemUsed(pid, HEALING_POTION.id))
+
+                                }
+                            }
+                    }
                 }
-                Button("Деревянный меч") {
-                    modifier
-                        .margin(end = 8.dp)
-                        .onClick{
-                            val pid = game.playerId.value
-                            val idx = game.selectedSlot.value
-                            val (updated, leftOver) = putIntoSlot(game.holder.value, idx, WOOD_SWORD, 1)
-
-                            game.holder.value = updated
-
-                            bus.publish(ItemAdded(pid, HEALING_POTION.id, 6, leftOver))
-                        }
+                Row {
+                    Button("Выкинуть предмет") {
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick{
+                                val pid = game.playerId.value
+                                val idx = game
+                                val slots = game.holder.use()
+                                val selected = game.selectedSlot.use()
+//                                dropItem(bus, pid, idx, slots , selected )
+                                addColorMesh {
+                                    generate {
+                                        cube{ colored()}
+                                    }
+                                    shader = KslPbrShader{
+                                        color { vertexColor() }
+                                        metallic(1f)
+                                        roughness(0.8f)
+                                    }
+                                    onUpdate{
+                                        transform.rotate(45f.deg * Time.deltaT, Vec3f.Z_AXIS)
+                                    }
+                                }
+                            }
+                    }
                 }
             }
         }
