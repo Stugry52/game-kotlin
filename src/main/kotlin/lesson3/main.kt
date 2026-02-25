@@ -474,8 +474,7 @@ fun main() = KoolApplication{
 
                                 useSelected(slots, selected)
 
-                                if (selected != nul
-                                    l) {
+                                if (selected != null) {
                                     bus.publish(ItemUsed(pid, WOOD_SWORD.id))
                                 } else if (id == HEALING_POTION) {
                                     game.potionTicksLeft.value += 5
