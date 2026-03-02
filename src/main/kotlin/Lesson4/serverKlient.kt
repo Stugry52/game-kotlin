@@ -248,7 +248,7 @@ class ServerWorld(
         inbox.removeAll(ready)
 
         for (pending in ready){
-            applyCommand(pending.cmd)
+         //   applyCommand(pending.cmd)
         }
     }
 
