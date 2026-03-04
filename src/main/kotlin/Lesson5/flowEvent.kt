@@ -100,7 +100,7 @@ class ServerWorld(
         // copy - data class функция - создает копию объекта с измененным полем
     }
 
-    fun questSatteChanged(playerId: String, questId: String, newState: String){
+    fun questStateChanged(playerId: String, questId: String, newState: String){
         val old = _playerState.value
 
         // + создает новую Map (старую Мар не ломаем)
