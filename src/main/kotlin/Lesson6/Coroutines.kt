@@ -19,6 +19,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import lesson2.HEALING_POTION
+import lesson2.WOOD_SWORD
+import lesson2.putIntoSlot
 
 // В настоящий игре много событий и процессов заточенных на времени
 // Яд тикает раз в секунду
@@ -174,7 +177,69 @@ class CooldownManager(
 }
 
 fun main() = KoolApplication{
-    
+    val game = GameState()
+    //val effectManager = EffectManager(game, )
+   // val cooldownManager = CooldownManager(game, )
+    addScene {
+        defaultOrbitCamera()
+
+        addColorMesh {
+            generate {
+                cube{ colored()}
+            }
+            shader = KslPbrShader{
+                color { vertexColor() }
+                metallic(1f)
+                roughness(0.8f)
+            }
+            onUpdate{
+                transform.rotate(45f.deg * Time.deltaT, Vec3f.Z_AXIS)
+            }
+        }
+
+        lighting.singleDirectionalLight {
+            setup(Vec3f(-1f,-1f,-1f))
+            setColor(Color.WHITE, 7f)
+        }
+    }
+
+    addScene {
+        setupUiScene(ClearColorLoad)
+
+        addPanelSurface {
+            modifier
+                .align(AlignmentX.Start, AlignmentY.Top)
+                .margin(16.dp)
+                .background(RoundRectBackground(Color(0f,0f,0f, 0.5f), 14.dp))
+                .padding(12.dp)
+
+            Column {
+                Text("Игрок: ${game.playerId.use()}"){}
+                Text("Hp: ${game.hp.use()}"){}
+
+                Row {
+                    modifier.margin(top = 6.dp)
+
+                    Button("Получить зелье") {
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick{
+
+                            }
+                    }
+                    Button("Деревянный меч") {
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick{
+
+                            }
+                    }
+                }
+            }
+        }
+
+    }
+
 }
 
 
