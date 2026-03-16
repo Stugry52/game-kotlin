@@ -14,6 +14,7 @@ import de.fabmax.kool.util.Time
 import de.fabmax.kool.pipeline.ClearColorLoad
 import de.fabmax.kool.modules.ui2.*
 import de.fabmax.kool.modules.ui2.UiModifier.*
+import kotlinx.coroutines.CoroutineScope
 
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
@@ -178,10 +179,11 @@ class CooldownManager(
 
 fun main() = KoolApplication{
     val game = GameState()
-    //val effectManager = EffectManager(game, )
+
    // val cooldownManager = CooldownManager(game, )
     addScene {
         defaultOrbitCamera()
+
 
         addColorMesh {
             generate {
@@ -205,6 +207,7 @@ fun main() = KoolApplication{
 
     addScene {
         setupUiScene(ClearColorLoad)
+        //val effectManager = EffectManager(game, CoroutineScope())
 
         addPanelSurface {
             modifier
