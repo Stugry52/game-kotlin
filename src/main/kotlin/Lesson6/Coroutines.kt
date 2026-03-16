@@ -184,7 +184,6 @@ fun main() = KoolApplication{
     addScene {
         defaultOrbitCamera()
 
-
         addColorMesh {
             generate {
                 cube{ colored()}
@@ -207,7 +206,7 @@ fun main() = KoolApplication{
 
     addScene {
         setupUiScene(ClearColorLoad)
-        //val effectManager = EffectManager(game, CoroutineScope())
+       // val effectManager = EffectManager(game, CoroutineScope())
 
         addPanelSurface {
             modifier

@@ -51,8 +51,8 @@ data class QuestStateOnServer(
     val questId: String,
     val title: String,
     val status: QuestStatus,
-    val step: Int,
-    val progressCurrent: Int,
+    var step: Int,
+    var progressCurrent: Int,
     val progressTarget: Int,
     val isNew: Boolean,
     val isPinned: Boolean
@@ -86,7 +86,7 @@ data class GoldPaid(
     val amount: Int
 ): GameEvent
 
-data class  ItemGivenToNpc(
+data class ItemGivenToNpc(
     override val playerId: String,
     val npcId: String,
     val itemId: String,
@@ -251,9 +251,37 @@ class QuestSystem{
     }
 
     private fun updateAlchemistQuest(q: QuestStateOnServer, event: GameEvent): QuestStateOnServer{
+
+        q.step += 1
         // Автоматический переход из step 0 в step 1 (как будто он сразу говорит с нпс)
+        when(q.step){
+            1 -> when(event){
+                is ItemCollected -> while (q.progressCurrent < q.progressTarget) {
+                    q.progressCurrent += 1
+                }
+                else -> ""
+            }
+            2 -> when(event){
+                is ItemGivenToNpc -> println("${event.itemId} в количестве ${event.count} передан NPC: ${event.npcId} ")
+                else -> ""
+            }
+            else -> ""
+        }
         // сбор травы - вы меняете progressCurrent по умолчанию 0 и симулируете поднятие изменяя до progressTarget
         // Создаете передачу предметов нпс если условие удовлетворяют
+        return q
+    }
+
+    private fun updateGuardQuest(q: QuestStateOnServer, event: GameEvent): QuestStateOnServer{
+        q.step += 1
+        when(q.step){
+            1 -> when(event){
+                is GoldPaid -> println("Заплатили золото в количестве ${event.amount}")
+                else -> ""
+            }
+            else -> ""
+        }
+        return q
     }
 }
 
