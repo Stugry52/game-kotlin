@@ -353,6 +353,68 @@ class GameServer{
     )
 
     val questsByPlayer: StateFlow<Map<String, List<QuestStateOnServer>>> = _questsByPlayer.asStateFlow()
+
+    fun start(scope: kotlinx.coroutines.CoroutineScope, questSystem: QuestSystem){
+        // Сервер слушает команды и выполняет их
+
+        scope.launch {
+            command.collect{ cmd ->
+                progressComand(cmd, questSystem)
+            }
+        }
+    }
+
+    private  fun getPlayerData(playerId: String): PlayerData{
+        return _player.value[playerId] ?: PlayerData(playerId, 0, emptyMap())
+    }
+
+    private fun setPlayerData(playerId: String, newData: PlayerData){
+        val map = _player.value.toMutableMap()
+        map[playerId] = newData
+        _player.value = map.toMap()
+    }
+
+    private fun getQuests(playerId: String): List<QuestStateOnServer>{
+        return _questsByPlayer.value[playerId] ?: emptyList()
+    }
+
+    fun setQuests(playerId: String, quests: List<QuestStateOnServer>){
+        val map = _questsByPlayer.value.toMutableMap()
+        map[playerId] = quests
+        _questsByPlayer.value = map.toMap()
+    }
+
+    private suspend fun progressCommand(cmd: GameCommand, quest: QuestSystem){
+        when(cmd){
+            is CmdOpenQuest -> {
+                val list = getQuests(cmd.questId).toMutableList()
+                for (i in list.indices){
+                    if (list[i].questId == cmd.questId){
+                        list[i] = list[i].copy(isNew = false)
+                    }
+                }
+                setQuests(cmd.playerId, list)
+                _evets.emit(QuestJournalUpdated(cmd.playerId))
+            }
+            is CmdPinned -> {
+                val list = getQuests(cmd.questId).toMutableList()
+                for (i in list.indices) {
+                    if (list[i].questId == cmd.questId) {
+                        list[i] = list[i].copy(isPinned = true)
+                    }
+                }
+                setQuests(cmd.playerId, list)
+                _evets.emit(QuestJournalUpdated(cmd.playerId))
+            }
+            is CmdGiveGoldDebug -> {
+                val p = getPlayerData(cmd.playerId)
+                val updated = p.copy(gold = p.gold + cmd.amount)
+                setPlayerData(cmd.playerId, updated)
+
+                _evets.emit(ServerMessage(cmd.playerId, "Выдано золото: +${cmd.amount}"))
+            }
+        }
+    }
 }
 
 
