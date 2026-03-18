@@ -1,5 +1,6 @@
 package QuestJournal2
 
+import Lesson6.GameState
 import de.fabmax.kool.KoolApplication
 import de.fabmax.kool.addScene
 import de.fabmax.kool.math.Vec3f
@@ -359,7 +360,7 @@ class GameServer{
 
         scope.launch {
             command.collect{ cmd ->
-                progressComand(cmd, questSystem)
+                progressCommand(cmd, questSystem)
             }
         }
     }
@@ -413,10 +414,178 @@ class GameServer{
 
                 _evets.emit(ServerMessage(cmd.playerId, "Выдано золото: +${cmd.amount}"))
             }
+            is CmdCollectItem -> {
+                val p = getPlayerData(cmd.playerId)
+
+                val oldCount = p.inventory[cmd.itemId] ?: 0
+                val newCount = oldCount + cmd.count
+
+                val inventory = p.inventory.toMutableMap()
+                inventory[cmd.itemId] = newCount
+
+                setPlayerData(cmd.playerId, p.copy(inventory = inventory.toMap()))
+
+                val ev = ItemCollected(cmd.playerId, cmd.itemId, cmd.count)
+                _evets.emit(ev)
+
+                val newQuest = quest.onEvent(cmd.playerId, getQuests(cmd.playerId), ev)
+
+                _evets.emit(QuestJournalUpdated(cmd.playerId))
+            }
+
+            is CmdPayGold -> {
+                val p = getPlayerData(cmd.playerId)
+
+                if (p.gold < cmd.amount){
+                    _evets.emit(ServerMessage(cmd.playerId, "Недостаточно золото: нужно ${cmd.amount}"))
+                    return
+                }
+
+                setPlayerData(cmd.playerId, p.copy(gold = p.gold - cmd.amount))
+
+                val ev = GoldPaid(cmd.playerId, cmd.amount)
+                _evets.emit(ev)
+
+                val newQuests = quest.onEvent(cmd.playerId, getQuests(cmd.playerId), ev)
+                setQuests(cmd.playerId, newQuests)
+
+                _evets.emit(QuestJournalUpdated(cmd.playerId))
+            }
+
+            is CmdGiveItemToNpc -> {
+                val p = getPlayerData(cmd.playerId)
+
+                val have = p.inventory[cmd.itemId] ?: 0
+                if (have < cmd.count){
+                    _evets.emit(ServerMessage(cmd.playerId, "Не хватает ${cmd.itemId}"))
+                    return
+                }
+
+                val newCount = have - cmd.count
+                val  inventory = p.inventory.toMutableMap()
+                if (newCount <= 0) inventory.remove(cmd.itemId) else inventory[cmd.itemId] = newCount
+
+                setPlayerData(cmd.playerId, p.copy(inventory = inventory.toMap()))
+
+                val ev = ItemGivenToNpc(cmd.playerId, cmd.npcId, cmd.itemId, cmd.count)
+                _evets.emit(ev)
+
+                val newQuests = quest.onEvent(cmd.playerId, getQuests(cmd.playerId), ev)
+                setQuests(cmd.playerId, newQuests)
+
+                _evets.emit(QuestJournalUpdated(cmd.playerId))
+            }
         }
     }
 }
 
+class HudState{
+    val activePlayerIdFlow = MutableStateFlow("Oleg")
+    val activePlayerIdUi = mutableStateOf("Oleg")
+
+    val gold = mutableStateOf(0)
+    val  inventoryText = mutableStateOf("Inventory (entry)")
+
+    val questEntries = mutableStateOf<List<QuestJournalEntry>>(emptyList())
+    val selectedQuestId = mutableStateOf<String?>(null)
+
+    val log = mutableStateOf<List<String>>(emptyList())
+}
+
+fun hudLog(hud: HudState, text: String){
+    hud.log.value = (hud.log.value + text).takeLast(20)
+}
+
+fun markerSymbol(m: QuestMarker): String{
+    return when(m){
+        QuestMarker.NEW -> "!"
+        QuestMarker.PINNED -> "->"
+        QuestMarker.COMPLETED -> "✓"
+        QuestMarker.NONE -> "*"
+    }
+}
+
+fun main() = KoolApplication{
+
+    val hud = HudState()
+    val server = GameServer()
+    val questSystem = QuestSystem()
+
+    // val cooldownManager = CooldownManager(game, )
+    addScene {
+        defaultOrbitCamera()
+
+        addColorMesh {
+            generate {
+                cube{ colored()}
+            }
+            shader = KslPbrShader{
+                color { vertexColor() }
+                metallic(1f)
+                roughness(0.8f)
+            }
+            onUpdate{
+                transform.rotate(45f.deg * Time.deltaT, Vec3f.Z_AXIS)
+            }
+        }
+
+        lighting.singleDirectionalLight {
+            setup(Vec3f(-1f,-1f,-1f))
+            setColor(Color.WHITE, 7f)
+        }
+
+        server.start(coroutineScope, questSystem)
+    }
+
+    addScene {
+        setupUiScene(ClearColorLoad)
+
+        // Запускаете подписку на players data (gold inventory) для активного игрока
+        coroutineScope.launch {
+            server.players.collect { map ->
+                // Получаете активного игрока id
+                // сохраняем игрока по его id из map если null возвращаем collect
+                // присваиваем количество золота в hud состояние
+
+                // и присваиваем inventory к hud
+                // joinToString{} - превращает список элементов в одну строку
+                // Инвентарь если он не пуст достаточно вывести в формате Inventory: itemId(кол-во), itemId(кол-во)
+            }
+        }
+
+        addPanelSurface {
+            modifier
+                .align(AlignmentX.Start, AlignmentY.Top)
+                .margin(16.dp)
+                .background(RoundRectBackground(Color(0f,0f,0f, 0.5f), 14.dp))
+                .padding(12.dp)
+
+            Column {
+
+                Row {
+                    modifier.margin(top = 6.dp)
+
+                    Button("Получить зелье") {
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick{
+
+                            }
+                    }
+                    Button("Деревянный меч") {
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick{
+
+                            }
+                    }
+                }
+            }
+        }
+
+    }
+
+}
 
 
 
