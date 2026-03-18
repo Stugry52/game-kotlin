@@ -51,8 +51,8 @@ data class QuestStateOnServer(
     val questId: String,
     val title: String,
     val status: QuestStatus,
-    var step: Int,
-    var progressCurrent: Int,
+    val step: Int,
+    val progressCurrent: Int,
     val progressTarget: Int,
     val isNew: Boolean,
     val isPinned: Boolean
@@ -145,7 +145,7 @@ data class CmdGiveGoldDebug(
 // ------ Информация игрока для синхронизации на сервере --------- //
 data class PlayerData(
     val playerId: String,
-    val gold: String,
+    val gold: Int,
     val inventory: Map<String, Int>
 )
 
@@ -252,37 +252,107 @@ class QuestSystem{
 
     private fun updateAlchemistQuest(q: QuestStateOnServer, event: GameEvent): QuestStateOnServer{
 
-        q.step += 1
-        // Автоматический переход из step 0 в step 1 (как будто он сразу говорит с нпс)
-        when(q.step){
-            1 -> when(event){
-                is ItemCollected -> while (q.progressCurrent < q.progressTarget) {
-                    q.progressCurrent += 1
-                }
-                else -> ""
+        val base = if (q.step == 0){
+            q.copy(step = 1, progressCurrent = 0, progressTarget = 3, isNew = false)
+        }else q
+
+        if (base.step == 1 && event is ItemCollected && event.itemId == "herb"){
+            val newCurrent = (base.progressCurrent + event.countAdded).coerceAtMost(base.progressTarget)
+            val progressed = base.copy(progressCurrent = newCurrent, isNew = false)
+
+            if (newCurrent >= base.progressTarget){
+                return progressed.copy(step = 2, progressCurrent = 0, progressTarget = 0)
             }
-            2 -> when(event){
-                is ItemGivenToNpc -> println("${event.itemId} в количестве ${event.count} передан NPC: ${event.npcId} ")
-                else -> ""
-            }
-            else -> ""
+            return progressed
         }
-        // сбор травы - вы меняете progressCurrent по умолчанию 0 и симулируете поднятие изменяя до progressTarget
-        // Создаете передачу предметов нпс если условие удовлетворяют
-        return q
+
+        if (base.step == 2 && event is ItemGivenToNpc && event.npcId == "alchemist" && event.itemId == "herb"){
+            val completed = base.copy(status = QuestStatus.COMPLETED, step = 3, progressCurrent = 0, progressTarget = 0)
+        }
+
+        return base
+
+//        q.step += 1
+//        // Автоматический переход из step 0 в step 1 (как будто он сразу говорит с нпс)
+//        when(q.step){
+//            1 -> when(event){
+//                is ItemCollected -> while (q.progressCurrent < q.progressTarget) {
+//                    q.progressCurrent += 1
+//                }
+//                else -> ""
+//            }
+//            2 -> when(event){
+//                is ItemGivenToNpc -> println("${event.itemId} в количестве ${event.count} передан NPC: ${event.npcId} ")
+//                else -> ""
+//            }
+//            else -> ""
+//        }
+//        // сбор травы - вы меняете progressCurrent по умолчанию 0 и симулируете поднятие изменяя до progressTarget
+//        // Создаете передачу предметов нпс если условие удовлетворяют
+//        return q
     }
 
     private fun updateGuardQuest(q: QuestStateOnServer, event: GameEvent): QuestStateOnServer{
-        q.step += 1
-        when(q.step){
-            1 -> when(event){
-                is GoldPaid -> println("Заплатили золото в количестве ${event.amount}")
-                else -> ""
+
+        val base = if(q.step == 0){
+            q.copy(step = 1, progressCurrent = 0, progressTarget = 5, isNew = false)
+        }else q
+
+        if (base.step == 1 && event is GoldPaid && event.amount > 0){
+            val newCurrent = (base.progressCurrent + event.amount).coerceAtMost(base.progressTarget)
+            val progressed = base.copy(progressCurrent = newCurrent, isNew = false)
+
+            if (newCurrent >= base.progressTarget){
+                return progressed.copy(status = QuestStatus.COMPLETED, step = 2, progressCurrent = 0, progressTarget = 0)
             }
-            else -> ""
+            return progressed
         }
-        return q
+        return base
+
+//        q.step += 1
+//        when(q.step){
+//            1 -> when(event){
+//                is GoldPaid -> println("Заплатили золото в количестве ${event.amount}")
+//                else -> ""
+//            }
+//            else -> ""
+//        }
+//        return q
     }
+}
+
+class GameServer{
+    private val  _evets = MutableSharedFlow<GameEvent>(extraBufferCapacity = 64)
+    val event: SharedFlow<GameEvent> = _evets.asSharedFlow()
+
+    private val  _commands = MutableSharedFlow<GameCommand>(extraBufferCapacity = 64)
+    val command: SharedFlow<GameCommand> = _commands.asSharedFlow()
+
+    fun trySend(cmd: GameCommand): Boolean = _commands.tryEmit(cmd)
+    // tryEmit - это быстрый способ отправить команду(без корутины)
+
+    private val _player = MutableStateFlow(
+        mapOf(
+            "Oleg" to PlayerData("Oleg", 0, emptyMap()),
+            "Stas" to PlayerData("Stas", 0, emptyMap())
+        )
+    )
+    val players: SharedFlow<Map<String, PlayerData>> = _player.asStateFlow()
+
+    private val _questsByPlayer = MutableStateFlow(
+        mapOf(
+            "Oleg" to listOf(
+                QuestStateOnServer("q_alchemist", "Помощь Хайзенбергу", QuestStatus.ACTIVE, 0, 0, 0, true, false),
+                QuestStateOnServer("q_guard", "Взятка стражнику этой двери", QuestStatus.ACTIVE,0,0,0,true,false)
+            ),
+            "Stas" to listOf(
+                QuestStateOnServer("q_alchemist", "Помощь Хайзенбергу", QuestStatus.ACTIVE, 0, 0, 0, true, false),
+                QuestStateOnServer("q_guard", "Взятка стражнику этой двери", QuestStatus.ACTIVE,0,0,0,true,false)
+            )
+        )
+    )
+
+    val questsByPlayer: StateFlow<Map<String, List<QuestStateOnServer>>> = _questsByPlayer.asStateFlow()
 }
 
 
