@@ -180,7 +180,7 @@ class CooldownManager(
 fun main() = KoolApplication{
     val game = GameState()
 
-   // val cooldownManager = CooldownManager(game, )
+
     addScene {
         defaultOrbitCamera()
 
@@ -206,7 +206,8 @@ fun main() = KoolApplication{
 
     addScene {
         setupUiScene(ClearColorLoad)
-       // val effectManager = EffectManager(game, CoroutineScope())
+        val effectManager = EffectManager(game, coroutineScope)
+        val cooldownManager = CooldownManager(game, coroutineScope)
 
         addPanelSurface {
             modifier
@@ -222,18 +223,26 @@ fun main() = KoolApplication{
                 Row {
                     modifier.margin(top = 6.dp)
 
-                    Button("Получить зелье") {
+                    Button("Наложить яд") {
                         modifier
                             .margin(end = 8.dp)
                             .onClick{
-
+                                effectManager.applyPoison(10, 2, 1)
                             }
                     }
-                    Button("Деревянный меч") {
+                    Button("Наложить реген") {
                         modifier
                             .margin(end = 8.dp)
                             .onClick{
-
+                                effectManager.applyRegen(15, 2, 1)
+                            }
+                    }
+                    Button("Наложить кулдаун") {
+                        modifier
+                            .margin(end = 8.dp)
+                            .onClick{
+                                cooldownManager.startAttackCooldown(5)
+                                cooldownManager.canAttack()
                             }
                     }
                 }

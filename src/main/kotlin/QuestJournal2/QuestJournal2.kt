@@ -1,6 +1,5 @@
 package QuestJournal2
 
-import Lesson6.GameState
 import de.fabmax.kool.KoolApplication
 import de.fabmax.kool.addScene
 import de.fabmax.kool.math.Vec3f
@@ -484,7 +483,7 @@ class HudState{
     val activePlayerIdUi = mutableStateOf("Oleg")
 
     val gold = mutableStateOf(0)
-    val  inventoryText = mutableStateOf("Inventory (entry)")
+    val inventoryText = mutableStateOf("Inventory (entry)")
 
     val questEntries = mutableStateOf<List<QuestJournalEntry>>(emptyList())
     val selectedQuestId = mutableStateOf<String?>(null)
@@ -543,10 +542,14 @@ fun main() = KoolApplication{
         // Запускаете подписку на players data (gold inventory) для активного игрока
         coroutineScope.launch {
             server.players.collect { map ->
+                val p = hud.activePlayerIdUi
                 // Получаете активного игрока id
+               // if (map.values == null) map.ap else return@collect
                 // сохраняем игрока по его id из map если null возвращаем collect
+                val g = hud.gold
                 // присваиваем количество золота в hud состояние
 
+                val inventory = hud.inventoryText
                 // и присваиваем inventory к hud
                 // joinToString{} - превращает список элементов в одну строку
                 // Инвентарь если он не пуст достаточно вывести в формате Inventory: itemId(кол-во), itemId(кол-во)
@@ -565,14 +568,14 @@ fun main() = KoolApplication{
                 Row {
                     modifier.margin(top = 6.dp)
 
-                    Button("Получить зелье") {
+                    Button("") {
                         modifier
                             .margin(end = 8.dp)
                             .onClick{
 
                             }
                     }
-                    Button("Деревянный меч") {
+                    Button("") {
                         modifier
                             .margin(end = 8.dp)
                             .onClick{
