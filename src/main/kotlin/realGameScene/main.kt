@@ -1,5 +1,7 @@
 package realGameScene
 
+import QuestJournal2.PlayerData
+import QuestJournal2.QuestSystem
 import de.fabmax.kool.KoolApplication
 import de.fabmax.kool.addScene
 import de.fabmax.kool.math.Vec3f
@@ -279,7 +281,102 @@ data class ServerMessage(
     val text: String
 ): GameEvent
 
+// ======= Серверная логика мира ====== //
 
+class GameServer{
+    // Список объектов мира
+    val worldObjects = listOf(
+        WorldObjectDef(
+            "alchemist",
+            WorldObjectType.ALCHEMIST,
+            -3f,
+            0f,
+            1.7f
+        ),
+        WorldObjectDef(
+            "herb_source",
+            WorldObjectType.HERB_SOURCE,
+            3f,
+            0f,
+            1.7f
+        )
+    )
+
+    // Поток событий
+    private val _evets = MutableSharedFlow<QuestJournal2.GameEvent>(extraBufferCapacity = 64)
+    val event: SharedFlow<QuestJournal2.GameEvent> = _evets.asSharedFlow()
+
+    // Поток команд
+    private val  _commands = MutableSharedFlow<QuestJournal2.GameCommand>(extraBufferCapacity = 64)
+    val command: SharedFlow<QuestJournal2.GameCommand> = _commands.asSharedFlow()
+
+    fun trySend(cmd: QuestJournal2.GameCommand): Boolean = _commands.tryEmit(cmd)
+    // tryEmit - это быстрый способ отправить команду(без корутины)
+
+    private val _player = MutableStateFlow(
+        mapOf(
+            "Oleg" to initialPlayerState("Oleg"),
+            "Stas" to initialPlayerState("Stas")
+        )
+    )
+
+    val players: StateFlow<Map<String, PlayerState>> = _player.asStateFlow()
+
+    fun start(scope: kotlinx.coroutines.CoroutineScope, questSystem: QuestSystem){
+        // Сервер слушает команды и выполняет их
+
+        scope.launch {
+            command.collect{ cmd ->
+                progressCommand(cmd, questSystem)
+            }
+        }
+    }
+
+    private  fun getPlayerData(playerId: String): PlayerState{
+        return _player.value[playerId] ?: initialPlayerState(playerId)
+    }
+
+    private fun setPlayerData(playerId: String, newData: PlayerState){
+        val map = _player.value.toMutableMap()
+        map[playerId] = newData
+        _player.value = map.toMap()
+    }
+
+    fun updatePlayer(playerId: String, changed: (PlayerState) -> PlayerState){
+        val oldMap = _player.value
+        val oldPlayer = oldMap[playerId] ?: return
+
+        val newPlayer = changed(oldPlayer)
+
+        val newMap = oldMap.toMutableMap()
+        newMap[playerId] = newPlayer
+        _player.value = newMap.toMap()
+    }
+
+    // поиск объекта ближайшего, в чью зону, попадет игрок
+    private fun nearestObject(player: PlayerState): WorldObjectDef?{
+        val candidates = worldObjects.filter { obj ->
+            distance2d(player.posX, player.posZ, obj.x, obj.z) <= obj.interactRadius
+        }
+
+        return candidates.minByOrNull { obj ->
+            distance2d(player.posX, player.posZ, obj.x, obj.z)
+        }
+        // minByOrNull - минимальное из возможных или null (взять ближайший объект по расстоянию по игрока)
+        // OrNull - если список этих объектов пуст - вернуть null
+    }
+
+    // Метод refreshPlayerArea (playerId: String)
+    // Должен пересчитывать в какой зоне сейчас находиться игрок
+    // Вам нужно получить игрока
+    // Получить ближайших объектов
+    // сохранить старое состояние игрока в какой зоне он был ранее
+    // получить id зоны в которую он попал теперь new
+
+    // сравнение новой зоны со старой
+    // в зависимости от того в какой зоне он находиться в newHint вернуть текст для зоны alchemist и зоны herb_source
+    // после обновляем игрока (свойство hintText)
+}
 
 
 
