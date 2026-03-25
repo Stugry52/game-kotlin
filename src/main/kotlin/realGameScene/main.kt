@@ -42,7 +42,8 @@ enum class QuestState{
 
 enum class WorldObjectType{
     ALCHEMIST,
-    HERB_SOURCE
+    HERB_SOURCE,
+    CHEST
 }
 
 // Описание объекта в мире
@@ -58,7 +59,8 @@ data class WorldObjectDef(
 data class NpcMemory(
     val hasMet: Boolean,        // Встретился ли игрок уже с Npc
     val timeTalked: Int,        // Сколько раз поговорил
-    val receivedHerb: Boolean   // Отдали ли уже траву
+    val receivedHerb: Boolean,   // Отдали ли уже траву
+    val sawPlayerNearSource: Boolean
 )
 
 // Состояние игрока на сервере
@@ -68,6 +70,7 @@ data class PlayerState(
     val posZ: Float,
     val questState: QuestState,
     val inventory: Map<String, Int>,
+    val gold: Int,
     val alchemistMemory: NpcMemory,
     val currentAreaId: String?,           // В какой локации находится (может быть null - если ни в каком)
     val hintText: String
@@ -93,10 +96,12 @@ fun initialPlayerState(playerId: String): PlayerState{
             0f,
             QuestState.START,
             emptyMap(),
+            0,
             NpcMemory(
                 true,
                 2,
-                false
+                false,
+                true
             ),
             null,
             "Подойди к любой области на карте"
@@ -108,9 +113,11 @@ fun initialPlayerState(playerId: String): PlayerState{
             0f,
             QuestState.START,
             emptyMap(),
+            0,
             NpcMemory(
                 false,
                 0,
+                false,
                 false
             ),
             null,
@@ -132,7 +139,7 @@ data class DialogueView(
     val options: List<DialogueOption>
 )
 
-fun buidAlchemistDialogue(player: PlayerState): DialogueView{
+fun buildAlchemistDialogue(player: PlayerState): DialogueView{
     val herbs = herbCount(player)
     val memory = player.alchemistMemory
 
@@ -161,16 +168,21 @@ fun buidAlchemistDialogue(player: PlayerState): DialogueView{
         }
 
         QuestState.WAIT_HERB -> {
+            val beOnSource = if (memory.sawPlayerNearSource){
+                "Вижу, ты хотя бы дошёл до места, где растёт трава, ты ее принес."
+            }else{
+                "Не знаю где ты взял эту траву, но пускай будет."
+            }
             if (herbs < 4) {
                 DialogueView(
                     "Алхимик",
-                    "Пока ты собрал только $herbs/4 Травы. Возвращайся с полным товаром",
+                    "$beOnSource Пока ты собрал только $herbs/4 Травы. Возвращайся с полным товаром",
                     emptyList()
                 )
             } else {
                 DialogueView(
                     "Алхимик",
-                    "Отличный товар, давай сюда",
+                    "$beOnSource Отличный товар, давай сюда",
                     listOf(
                         DialogueOption(
                             "give_herb",
@@ -299,6 +311,13 @@ class GameServer{
             3f,
             0f,
             1.7f
+        ),
+        WorldObjectDef(
+            "treasure_box",
+            WorldObjectType.CHEST,
+            0f,
+            3f,
+            1.7f
         )
     )
 
@@ -366,6 +385,29 @@ class GameServer{
         // OrNull - если список этих объектов пуст - вернуть null
     }
 
+    fun refreshPlayerArea(playerId: String){
+
+        val player = getPlayerData(playerId)
+        val nearObject = nearestObject(player)
+
+        val oldArea = player.currentAreaId
+        val newArea = nearObject?.id
+
+        var newHint = ""
+
+        if (newArea == "alchemist"){
+            newHint = "Ты находися в зоне Алхимика, поговори с ним чтобы принять квест"
+        }else if(newArea == "herb_source"){
+            newHint = "Ты находися в зоне Источника травы, собери траву для алхимика"
+        }else{
+            newHint = "Вы не находитесь в зоне активности, подойдите к новому объекту"
+        }
+
+        updatePlayer(playerId) {player ->
+            player.copy(hintText = newHint)
+        }
+    }
+
     // Метод refreshPlayerArea (playerId: String)
     // Должен пересчитывать в какой зоне сейчас находиться игрок
     // Вам нужно получить игрока
@@ -376,7 +418,31 @@ class GameServer{
     // сравнение новой зоны со старой
     // в зависимости от того в какой зоне он находиться в newHint вернуть текст для зоны alchemist и зоны herb_source
     // после обновляем игрока (свойство hintText)
+
+    private suspend fun progressCommand(cmd: GameCommand, quest: QuestSystem){
+        when(cmd){
+            is CmdCooseDialogueOption -> {
+                val p = getPlayerData(cmd.playerId)
+                val nearObject = nearestObject(p)
+                if(nearObject?.id != "alchemist"){
+                    ServerMessage(cmd.playerId, "Ты отошёл слишком далеко от Алхимика")
+                }
+            }
+            is CmdInteract -> {
+                val p = getPlayerData(cmd.playerId)
+                val nearObject = nearestObject(p)
+                if (nearObject?.type == WorldObjectType.CHEST){
+                    setPlayerData(cmd.playerId, p.copy(gold = p.gold + 1))
+                }
+            }
+        }
+    }
+
 }
+
+// 1.1 a) Люблю котлин
+// 1.2 a) Для рассылки событий
+// 1.3 b) до 18340
 
 
 
