@@ -1,7 +1,31 @@
 package realGameScene
 
-import QuestJournal2.QuestSystem
+import de.fabmax.kool.KoolApplication
+import de.fabmax.kool.addScene
+import de.fabmax.kool.math.Vec3f
+import de.fabmax.kool.math.deg
+import de.fabmax.kool.modules.ksl.KslPbrShader
+import de.fabmax.kool.modules.ui2.AlignmentX
+import de.fabmax.kool.modules.ui2.AlignmentY
+import de.fabmax.kool.modules.ui2.Button
+import de.fabmax.kool.modules.ui2.Column
+import de.fabmax.kool.modules.ui2.RoundRectBackground
+import de.fabmax.kool.modules.ui2.Row
+import de.fabmax.kool.modules.ui2.Text
+import de.fabmax.kool.modules.ui2.addPanelSurface
+import de.fabmax.kool.modules.ui2.align
+import de.fabmax.kool.modules.ui2.background
+import de.fabmax.kool.modules.ui2.font
+import de.fabmax.kool.modules.ui2.margin
 import de.fabmax.kool.modules.ui2.mutableStateOf
+import de.fabmax.kool.modules.ui2.onClick
+import de.fabmax.kool.modules.ui2.padding
+import de.fabmax.kool.modules.ui2.setupUiScene
+import de.fabmax.kool.pipeline.ClearColorLoad
+import de.fabmax.kool.scene.addColorMesh
+import de.fabmax.kool.scene.defaultOrbitCamera
+import de.fabmax.kool.util.Color
+import de.fabmax.kool.util.Time
 
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow           // MutableStateFlow - радиостанция событий (мы туда)
@@ -10,6 +34,12 @@ import kotlinx.coroutines.flow.MutableSharedFlow          // MutableSharedFlow -
 import kotlinx.coroutines.flow.SharedFlow                 // SharedFlow - только чтение состояния
 import kotlinx.coroutines.flow.asSharedFlow               // asSharedFlow() - отдать наружу только SharedFlow
 import kotlinx.coroutines.flow.asStateFlow                // asStateFlow() - отдать наружу только StateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.selects.select
+import org.w3c.dom.Text
 
 import kotlin.math.sqrt
 
@@ -327,17 +357,17 @@ class GameServer{
 
     val players: StateFlow<Map<String, PlayerState>> = _player.asStateFlow()
 
-    fun start(scope: kotlinx.coroutines.CoroutineScope, questSystem: QuestSystem){
+    fun start(scope: kotlinx.coroutines.CoroutineScope){
         // Сервер слушает команды и выполняет их
 
         scope.launch {
             command.collect{ cmd ->
-                progressCommand(cmd, questSystem)
+                progressCommand(cmd)
             }
         }
     }
 
-    private  fun getPlayerData(playerId: String): PlayerState{
+    fun getPlayerData(playerId: String): PlayerState{
         return _player.value[playerId] ?: initialPlayerState(playerId)
     }
 
@@ -430,7 +460,7 @@ class GameServer{
     // в зависимости от того в какой зоне он находиться в newHint вернуть текст для зоны alchemist и зоны herb_source
     // после обновляем игрока (свойство hintText)
 
-    private suspend fun progressCommand(cmd: GameCommand, quest: QuestSystem){
+    private suspend fun progressCommand(cmd: GameCommand){
         when(cmd){
             is CmdCooseDialogueOption -> {
                 val p = getPlayerData(cmd.playerId)
@@ -630,6 +660,152 @@ fun eventToText(e: GameEvent): String{
         is QuestStateChanged -> "QuestStateChanged ${e.newState}"
         is NpcMemoryChanged -> "NpcMemoryChanged ${e.memory}"
         is ServerMessage -> "Server ${e.text}"
+    }
+}
+
+fun main() = KoolApplication {
+    val hud = HudState()
+    val server = GameServer()
+
+    addScene {
+        defaultOrbitCamera()
+
+        val playerNode = addColorMesh {
+            generate {
+                cube{
+                    colored()
+                }
+            }
+
+            shader = KslPbrShader{
+                color { vertexColor() }
+                metallic(0f)
+                roughness(0.25f)
+            }
+        }
+        val alchemistNode = addColorMesh {
+            generate {
+                cube{
+                    colored()
+                }
+            }
+
+            shader = KslPbrShader{
+                color { vertexColor() }
+                metallic(0f)
+                roughness(0.25f)
+            }
+        }
+
+        alchemistNode.transform.translate(-3f, 0f, 0f)
+
+        val herbNode = addColorMesh {
+            generate {
+                cube{
+                    colored()
+                }
+            }
+
+            shader = KslPbrShader{
+                color { vertexColor() }
+                metallic(0f)
+                roughness(0.25f)
+            }
+        }
+        herbNode.transform.translate(3f, 0f, 0f)
+
+        lighting.singleDirectionalLight {
+            setup(Vec3f(-1f, -1f, -1f))
+            setColor(Color.WHITE, 5f)
+        }
+        server.start(coroutineScope)
+
+        // Будем хранить последние положение игрока в пространстве для отрисовки
+        // И смещать игрока сдвигать куб на разницу между прошлой новой точки
+        var lastRenderedX = 0f
+        var lastRenderedZ = 0f
+
+        playerNode.onUpdate{
+            val activeId = hud.activePlayerIdFlow.value
+            val player = server.getPlayerData(activeId)
+
+            val dx = player.posX - lastRenderedX
+            val dz = player.posZ - lastRenderedZ
+
+            playerNode.transform.translate(dx, 0f, dz)
+
+            lastRenderedX = player.posX
+            lastRenderedZ = player.posZ
+
+
+        }
+        alchemistNode.onUpdate{
+            transform.rotate(20f.deg * Time.deltaT, Vec3f.Y_AXIS)
+        }
+        herbNode.onUpdate{
+            transform.rotate(35f.deg * Time.deltaT, Vec3f.Y_AXIS)
+        }
+    }
+    addScene {
+        setupUiScene(ClearColorLoad)
+
+        hud.activePlayerIdFlow.flatMapLatest { pid ->
+            server.players.map { map ->
+                map[pid] ?: initialPlayerState(pid)
+            }
+        }
+            .onEach { player ->
+                hud.playerSnapShot.value = player
+            }
+            .launchIn(coroutineScope)
+        addPanelSurface {
+            modifier
+                .align(AlignmentX.Start, AlignmentY.Top)
+                .margin(16.dp)
+                .background(RoundRectBackground(Color(0f, 0f, 0f, 0.5f), 14.dp))
+                .padding(12.dp)
+
+            Column {
+                val player = hud.playerSnapShot.use()
+                val dialogue = buildAlchemistDialogue(player)
+
+                Text("Игрок ${hud.activePlayerIdUi.use()}"){modifier.margin(bottom = sizes.gap)}
+
+                Text("Позиция: x=${"%.1f".format(player.posX)} z = ${"%.1f".format(player.posZ)}"){}
+                Text(currentZoneText(player)){modifier.font(sizes.smallText)}
+
+                Text("QuestState: ${player.questState}"){modifier.font(sizes.smallText)}
+                Text(currentObjective(player)){modifier.margin(bottom = sizes.gap)}
+                Text(formatInventory(player)) {modifier.font(sizes.smallText)}
+                Text("Hint: ${player.hintText}"){}
+
+                Row {
+                    Button("Лево") {
+                        modifier.onClick{
+                            server.trySend(CmdMovePlayer(player.playerId, dx = -0.5f, dz = 0f))
+                        }
+                    }
+                    Button("Право") {
+                        modifier.onClick{
+                            server.trySend(CmdMovePlayer(player.playerId, dx = 0.5f, dz = 0f))
+                        }
+                    }
+                    Button("Вперед") {
+                        modifier.onClick{
+                            server.trySend(CmdMovePlayer(player.playerId, dx = 0f, dz = -0.5f))
+                        }
+                    }
+                    Button("Назад") {
+                        modifier.onClick{
+                            server.trySend(CmdMovePlayer(player.playerId, dx = 0f, dz = 0.5f))
+                        }
+                    }
+                    // Кнопка взаимодействия с ближайшим
+                    // Отображение текста диалога и кнопок выбора
+                    
+                }
+            }
+        }
     }
 }
 
