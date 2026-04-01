@@ -329,7 +329,7 @@ class GameServer{
             1.7f
         ),
         WorldObjectDef(
-            "treasure_box",
+            "chest",
             WorldObjectType.CHEST,
             0f,
             3f,
@@ -437,6 +437,7 @@ class GameServer{
             when(newAreaId){
                 "alchemist" -> "Нажми для взаимодействия"
                 "herb_source" -> "Нажми для сбора травы"
+                "chest" -> "Нажми для того чтобы открыть"
                 else -> "Подойди к объекту"
             }
         updatePlayer(playerId){p ->
@@ -571,13 +572,11 @@ class GameServer{
                     }
 
                     WorldObjectType.CHEST ->{
+                        setPlayerData(cmd.playerId, p.copy(gold = p.gold + 20))
 
+                        _events.emit(ServerMessage(cmd.playerId, "Вы открыли сундук с сокровищами"))
                     }
                 }
-
-//                if (nearObject?.type == WorldObjectType.CHEST){
-//                    setPlayerData(cmd.playerId, p.copy(gold = p.gold + 1))
-//                }
             }
             is CmdMovePlayer -> {
                 updatePlayer(cmd.playerId){p ->
@@ -590,6 +589,9 @@ class GameServer{
             }
             is CmdSwitchActivePlayer -> {
                 // Дома
+                val oldPlayer = getPlayerData(cmd.playerId)
+                setPlayerData(cmd.playerId, oldPlayer)
+                _events.emit(ServerMessage(cmd.playerId, "Активный игрок сменен"))
             }
             is CmdResetPlayer -> {
                 updatePlayer(cmd.playerId) { _ -> initialPlayerState(cmd.playerId) }
@@ -642,6 +644,7 @@ fun currentZoneText(player: PlayerState): String{
     return when(player.currentAreaId){
         "alchemist" -> "Локация: Хайзенберг"
         "herb_source" -> "Локация: Лаборатория травы"
+        "chest" -> "Сундук с сокровищем"
         else -> "Где я"
     }
 }
@@ -696,6 +699,25 @@ fun main() = KoolApplication {
                 roughness(0.25f)
             }
         }
+        val chestNode = addColorMesh {
+            generate {
+                cube{
+                    colored()
+                }
+            }
+
+            shader = KslPbrShader{
+                color { vertexColor() }
+                metallic(0f)
+                roughness(0.25f)
+            }
+        }
+        chestNode.isVisible = true
+        chestNode.transform.translate(0f, 0f, -4f)
+
+        chestNode.onUpdate{
+            transform.rotate(35f.deg * Time.deltaT, Vec3f.Y_AXIS)
+        }
 
         alchemistNode.transform.translate(-3f, 0f, 0f)
 
@@ -745,6 +767,7 @@ fun main() = KoolApplication {
         herbNode.onUpdate{
             transform.rotate(35f.deg * Time.deltaT, Vec3f.Y_AXIS)
         }
+
     }
     addScene {
         setupUiScene(ClearColorLoad)
@@ -774,6 +797,8 @@ fun main() = KoolApplication {
                 Text("Позиция: x=${"%.1f".format(player.posX)} z = ${"%.1f".format(player.posZ)}"){}
                 Text(currentZoneText(player)){modifier.font(sizes.smallText)}
 
+                Text("Золото: ") {  }
+
                 Text("QuestState: ${player.questState}"){modifier.font(sizes.smallText)}
                 Text(currentObjective(player)){modifier.margin(bottom = sizes.gap)}
                 Text(formatInventory(player)) {modifier.font(sizes.smallText)}
@@ -781,29 +806,74 @@ fun main() = KoolApplication {
 
                 Row {
                     Button("Лево") {
-                        modifier.onClick{
+                        modifier.onClick {
                             server.trySend(CmdMovePlayer(player.playerId, dx = -0.5f, dz = 0f))
                         }
                     }
                     Button("Право") {
-                        modifier.onClick{
+                        modifier.onClick {
                             server.trySend(CmdMovePlayer(player.playerId, dx = 0.5f, dz = 0f))
                         }
                     }
                     Button("Вперед") {
-                        modifier.onClick{
+                        modifier.onClick {
                             server.trySend(CmdMovePlayer(player.playerId, dx = 0f, dz = -0.5f))
                         }
                     }
                     Button("Назад") {
-                        modifier.onClick{
+                        modifier.onClick {
                             server.trySend(CmdMovePlayer(player.playerId, dx = 0f, dz = 0.5f))
                         }
                     }
+                }
                     // Кнопка взаимодействия с ближайшим
                     // Отображение текста диалога и кнопок выбора
-                    
-                }
+                    Text("Потрогать:") {
+                        modifier.margin(top = sizes.gap)
+                    }
+
+                    Button("Взаимодействие с ближайшим") {
+                        modifier.margin(end = 8.dp).onClick{
+                            server.trySend(CmdInteract(player.playerId))
+                        }
+                    }
+
+                    Text("${dialogue.npcName}:"){
+                        modifier.margin(top = sizes.gap)
+                    }
+
+                    Text(dialogue.text){
+                        modifier.margin(bottom = sizes.smallGap)
+                    }
+
+                    if (dialogue.options.isEmpty()){
+                        Text("(Сейчас доступных ответов нет)"){
+                            modifier.font(sizes.smallText).margin(bottom = sizes.gap)
+                        }
+                    }else {
+                        Row {
+                            for (option in dialogue.options){
+                                Button(option.text) {
+                                    modifier.margin(end = 8.dp).onClick{
+                                        server.trySend(
+                                            CmdCooseDialogueOption(player.playerId, option.id)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Text("Log:") {
+                        modifier.margin(top = sizes.gap)
+                    }
+
+                    for (line in hud.log.use()){
+                        Text(line){
+                            modifier.font(sizes.smallText)
+                        }
+                    }
+
             }
         }
     }

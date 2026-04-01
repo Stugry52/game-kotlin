@@ -34,6 +34,8 @@ import kotlinx.coroutines.flow.launchIn                   // запустить 
 
 // ---------- Статусы и маркеры квестов ------- //
 
+
+
 enum class QuestStatus{
     ACTIVE,
     COMPLETED
