@@ -546,7 +546,8 @@ fun main() = KoolApplication{
             server.players.collect { map ->
                 val p = hud.activePlayerIdUi
                 // Получаете активного игрока id
-               // if (map.values == null) map.ap else return@collect
+                if (map.values == null) map. else return@collect
+
                 // сохраняем игрока по его id из map если null возвращаем collect
                 val g = hud.gold
                 // присваиваем количество золота в hud состояние
