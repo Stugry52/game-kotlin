@@ -1,6 +1,14 @@
 package questMarker
 
 import de.fabmax.kool.KoolApplication
+import de.fabmax.kool.addScene
+import de.fabmax.kool.math.Vec3f
+import de.fabmax.kool.math.deg
+import de.fabmax.kool.modules.ksl.KslPbrShader
+import de.fabmax.kool.modules.ui2.mutableStateOf
+import de.fabmax.kool.scene.addColorMesh
+import de.fabmax.kool.scene.defaultOrbitCamera
+import de.fabmax.kool.util.Time
 
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow           // MutableStateFlow - радиостанция событий (мы туда)
@@ -746,33 +754,253 @@ class GameServer{
     }
 }
 
-
-
 fun herbCount(player: PlayerState): Int{
     return player.inventory["herb"] ?: 0
 }
 
+class HudState{
+    val activePlayerIdFlow = MutableStateFlow("Oleg")
+    val activePlayerIdUi = mutableStateOf("Oleg")
 
+    val playerSnapShot = mutableStateOf(initialPlayerState("Oleg"))
 
+    val log = mutableStateOf<List<String>>(emptyList())
+}
 
+fun hudLog(hud: HudState, line: String){
+    hud.log.value = (hud.log.value + line).takeLast(20)
+}
 
+fun formatInventory(player: PlayerState): String{
+    return if (player.inventory.isEmpty()){
+        "Инвентарь: пуст"
+    }else{
+        "Инвентарь: " + player.inventory.entries.joinToString { "${it.key} x${it.value}"}
+    }
+}
 
+fun currentObjective(player: PlayerState): String{
+    val herbs = herbCount(player)
 
+    return when(player.questState){
+        QuestState.START -> "Подойди к алхимику"
+        QuestState.WAIT_HERB -> {
+            if (herbs < 4)"Собери 4 травы $herbs/4"
+            else "У тебя достаточно травы вернись к Хайзенбергу"
+        }
+        QuestState.GOOD_END -> "Квест завершен на хорошую концовку"
+        QuestState.EVIL_END -> "Квест завершен на плохую концовку"
+    }
+}
 
+fun formatMemory(memory: NpcMemory): String{
+    return "hasMet=${memory.hasMet}, talks=${memory.timeTalked}, receivedHerb=${memory.receivedHerb}"
+}
 
-
-
-
-
-
-
-
-
-
-
-
-
+fun eventToText(e: GameEvent): String{
+    return when(e){
+        is PlayerMoved -> "PlayerMoved (${e.newGridX}, ${e.newGridZ})"
+        is MovementBlocked -> "MovementBlocked (${e.blockedX}, ${e.blockedZ})"
+        is FocusChanged -> "FocusChanged ${e.newFocus}"
+        is InteractedWithChest -> "InteractedWithChest ${e.chestId}"
+        is InteractedWithDoor -> "InteractedWithDoor ${e.doorId}"
+        is InteractedWithNpc -> "InteractedWithNpc ${e.npcId}"
+        is InteractedWithHerbSource -> "InteractedWithHerbSource ${e.sourceId}"
+        is InventoryChanged -> "InventoryChanged ${e.itemId} to ${e.newCount}"
+        is QuestStateChanged -> "QuestStateChanged ${e.newState}"
+        is NpcMemoryChanged -> "NpcMemoryChanged ${e.memory}, Сколько раз поговорил = ${e.memory.timeTalked}, Отдал траву = ${e.memory.receivedHerb}"
+        is ServerMessage -> "Server ${e.text}"
+    }
+}
 
 fun main() = KoolApplication {
+    val hud = HudState()
+    val server = GameServer()
 
+    addScene{
+        defaultOrbitCamera()
+
+        for(x in -5..5){
+            for (z in -4..4){
+                addColorMesh {
+                    generate { cube { colored() } }
+
+                    shader = KslPbrShader{
+                        color { vertexColor() }
+                        metallic(0f)
+                        roughness(0.35f)
+                    }
+                }.transform.translate(x.toFloat(), -1.2f, z.toFloat())
+            }
+        }
+
+        val wallCells = listOf(
+            GridPos(-1, 1),
+            GridPos(0, 1),
+            GridPos(1, 1),
+            GridPos(1, 0)
+        )
+
+        for (cell in wallCells){
+            addColorMesh {
+                generate { cube { colored() } }
+
+                shader = KslPbrShader{
+                    color { vertexColor() }
+                    metallic(0f)
+                    roughness(0.35f)
+                }
+            }.transform.translate(cell.x.toFloat(), 0f, cell.z.toFloat())
+        }
+
+        val playerNode = addColorMesh {
+            generate { cube { colored() } }
+
+            shader = KslPbrShader{
+                color { vertexColor() }
+                metallic(0f)
+                roughness(0.15f)
+            }
+        }
+
+        val alchemistNode = addColorMesh {
+            generate { cube { colored() } }
+
+            shader = KslPbrShader{
+                color { vertexColor() }
+                metallic(0f)
+                roughness(0.15f)
+            }
+        }
+        alchemistNode.transform.translate(-3f,0f,0f)
+
+        val herbNode = addColorMesh {
+            generate { cube { colored() } }
+
+            shader = KslPbrShader{
+                color { vertexColor() }
+                metallic(0f)
+                roughness(0.15f)
+            }
+        }
+        herbNode.transform.translate(3f,0f,0f)
+
+        val chestNode = addColorMesh {
+            generate { cube { colored() } }
+
+            shader = KslPbrShader{
+                color { vertexColor() }
+                metallic(0f)
+                roughness(0.15f)
+            }
+        }
+        chestNode.transform.translate(1000f,0f,1000f)
+
+        val doorNode = addColorMesh {
+            generate { cube { colored() } }
+
+            shader = KslPbrShader{
+                color { vertexColor() }
+                metallic(0f)
+                roughness(0.15f)
+            }
+        }
+        doorNode.transform.translate(0f,0f,-3f)
+
+        server.start(coroutineScope)
+
+        var renderX = 0f
+        var renderZ = 0f
+        var lastAppliedX = 0f
+        var lastAppliedZ = 0f
+        var lastAppliedYaw = 0f
+
+        playerNode.onUpdate{
+            val activeId = hud.activePlayerIdFlow.value
+            val player = server.getPlayerData(activeId)
+
+            val targetX = player.gridX.toFloat()
+            val targetZ = player.gridZ.toFloat()
+
+            val speed = Time.deltaT * 8f
+            val t = if (speed > 1f) 1f else speed
+
+            renderX = larp( renderX, targetX, t)
+            renderZ = larp(renderZ, targetZ, t)
+
+            val dx = renderX - lastAppliedX
+            val dz = renderZ - lastAppliedZ
+
+            transform.translate(dx, 0f, dz)
+
+            lastAppliedX = renderX
+            lastAppliedZ = renderZ
+
+            val targetYaw = facingToYawDeg(player.facing)
+            val yawDelta = targetYaw - lastAppliedYaw
+
+            transform.rotate(yawDelta.deg, Vec3f.Y_AXIS)
+
+            lastAppliedYaw = targetYaw
+        }
+
+        alchemistNode.onUpdate{
+            transform.rotate(20f.deg * Time.deltaT, Vec3f.Y_AXIS)
+        }
+        herbNode.onUpdate{
+            transform.rotate(35f.deg * Time.deltaT, Vec3f.Y_AXIS)
+        }
+
+        var chestLastX = 1000f
+        var chestLastZ = 1000f
+
+        chestNode.onUpdate{
+            val activeId = hud.activePlayerIdFlow.value
+            val player = server.getPlayerData(activeId)
+
+            val visible = player.questState == QuestState.GOOD_END && !player.chestLooted
+
+            val targetX = if (visible) 0f else 1000f
+            val targetZ = if (visible) 3f else 1000f
+
+            val dx = targetX - chestLastX
+            val dz = targetZ - chestLastZ
+
+            transform.translate(dx, 0f, dz)
+
+            chestLastX = targetX
+            chestLastZ = targetZ
+
+            if (visible){
+                transform.rotate(50f.deg * Time.deltaT, Vec3f.Y_AXIS)
+            }
+        }
+
+        var doorLastX = 0f
+        var doorLastY = 0f
+        var doorLastZ = 0f
+
+        doorNode.onUpdate{
+            val activeId = hud.activePlayerIdFlow.value
+            val player = server.getPlayerData(activeId)
+
+            val targetX = if (player.doorOpened) 1.2f else 0f
+            val targetY = if (player.doorOpened) 0.8f else 0f
+            val targetZ = -3f
+
+            val dx = targetX - doorLastX
+            val dy = targetY - doorLastY
+            val dz = targetZ - doorLastZ
+
+            transform.translate(dx,dy,dz)
+
+            doorLastX = targetX
+            doorLastY = targetY
+            doorLastZ = targetZ
+
+            if (!player.doorOpened){
+                transform.rotate(10f.deg * Time.deltaT, Vec3f.Y_AXIS)
+            }
+        }
+    }
 }
