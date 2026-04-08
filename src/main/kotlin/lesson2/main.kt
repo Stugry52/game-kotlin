@@ -233,7 +233,7 @@ fun main( ) = KoolApplication{
                     }
                     Button("Получить зелье") {
                         modifier
-                            .margin(end = 8.dp)
+                            .margin(end  = 8.dp)
                             .onClick{
                                 val  idx = game.selectedSlot.value
                                 val  updated = putIntoSlot(game.holder.value, idx, HEALING_POTION, 3)
