@@ -10,6 +10,7 @@ import de.fabmax.kool.modules.ui2.AlignmentY
 import de.fabmax.kool.modules.ui2.Button
 import de.fabmax.kool.modules.ui2.Column
 import de.fabmax.kool.modules.ui2.RoundRectBackground
+import de.fabmax.kool.modules.ui2.Row
 import de.fabmax.kool.modules.ui2.Text
 import de.fabmax.kool.modules.ui2.addPanelSurface
 import de.fabmax.kool.modules.ui2.align
@@ -17,6 +18,7 @@ import de.fabmax.kool.modules.ui2.background
 import de.fabmax.kool.modules.ui2.font
 import de.fabmax.kool.modules.ui2.margin
 import de.fabmax.kool.modules.ui2.mutableStateOf
+import de.fabmax.kool.modules.ui2.onClick
 import de.fabmax.kool.modules.ui2.padding
 import de.fabmax.kool.modules.ui2.setupUiScene
 import de.fabmax.kool.pipeline.ClearColorLoad
@@ -1080,7 +1082,80 @@ fun main() = KoolApplication {
                 }
 
                 Row{
-                    Button {  }
+                    Button("Сменить игрока") {
+                        modifier.margin(end = 8.dp).onClick{
+                            val newId = if (hud.activePlayerIdUi.value == "Oleg") "Stas" else "Oleg"
+
+                            hud.activePlayerIdUi.value = newId
+                            hud.activePlayerIdFlow.value = newId
+                        }
+                    }
+                }
+                Row {
+                    Button("Лево") {
+                        modifier.onClick {
+                            server.trySend(CmdStepMove(player.playerId,  -1, 0))
+                        }
+                    }
+                    Button("Право") {
+                        modifier.onClick {
+                            server.trySend(CmdStepMove(player.playerId, 1, 0))
+                        }
+                    }
+                    Button("Вперед") {
+                        modifier.onClick {
+                            server.trySend(CmdStepMove(player.playerId, 0, -1))
+                        }
+                    }
+                    Button("Назад") {
+                        modifier.onClick {
+                            server.trySend(CmdStepMove(player.playerId, 0, 1))
+                        }
+                    }
+                }
+                Text("Потрогать:") {
+                    modifier.margin(top = sizes.gap)
+                }
+
+                Button("Взаимодействие с ближайшим") {
+                    modifier.margin(end = 8.dp).onClick{
+                        server.trySend(CmdInteract(player.playerId))
+                    }
+                }
+                Text("${dialogue.npcName}:"){
+                    modifier.margin(top = sizes.gap)
+                }
+
+                Text(dialogue.text){
+                    modifier.margin(bottom = sizes.smallGap)
+                }
+
+                if (dialogue.options.isEmpty()){
+                    Text("(Сейчас доступных ответов нет)"){
+                        modifier.font(sizes.smallText).margin(bottom = sizes.gap)
+                    }
+                }else {
+                    Row {
+                        for (option in dialogue.options){
+                            Button(option.text) {
+                                modifier.margin(end = 8.dp).onClick{
+                                    server.trySend(
+                                        CmdChooseDialogueOption(player.playerId, option.id)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Text("Log:") {
+                    modifier.margin(top = sizes.gap)
+                }
+
+                for (line in hud.log.use()){
+                    Text(line){
+                        modifier.font(sizes.smallText)
+                    }
                 }
             }
         }
