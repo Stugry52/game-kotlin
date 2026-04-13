@@ -5,9 +5,24 @@ import de.fabmax.kool.addScene
 import de.fabmax.kool.math.Vec3f
 import de.fabmax.kool.math.deg
 import de.fabmax.kool.modules.ksl.KslPbrShader
+import de.fabmax.kool.modules.ui2.AlignmentX
+import de.fabmax.kool.modules.ui2.AlignmentY
+import de.fabmax.kool.modules.ui2.Button
+import de.fabmax.kool.modules.ui2.Column
+import de.fabmax.kool.modules.ui2.RoundRectBackground
+import de.fabmax.kool.modules.ui2.Text
+import de.fabmax.kool.modules.ui2.addPanelSurface
+import de.fabmax.kool.modules.ui2.align
+import de.fabmax.kool.modules.ui2.background
+import de.fabmax.kool.modules.ui2.font
+import de.fabmax.kool.modules.ui2.margin
 import de.fabmax.kool.modules.ui2.mutableStateOf
+import de.fabmax.kool.modules.ui2.padding
+import de.fabmax.kool.modules.ui2.setupUiScene
+import de.fabmax.kool.pipeline.ClearColorLoad
 import de.fabmax.kool.scene.addColorMesh
 import de.fabmax.kool.scene.defaultOrbitCamera
+import de.fabmax.kool.util.Color
 import de.fabmax.kool.util.Time
 
 import kotlinx.coroutines.launch
@@ -17,6 +32,11 @@ import kotlinx.coroutines.flow.MutableSharedFlow          // MutableSharedFlow -
 import kotlinx.coroutines.flow.SharedFlow                 // SharedFlow - только чтение состояния
 import kotlinx.coroutines.flow.asSharedFlow               // asSharedFlow() - отдать наружу только SharedFlow
 import kotlinx.coroutines.flow.asStateFlow                // asStateFlow() - отдать наружу только StateFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 
 import kotlin.math.sqrt
 
@@ -1000,6 +1020,68 @@ fun main() = KoolApplication {
 
             if (!player.doorOpened){
                 transform.rotate(10f.deg * Time.deltaT, Vec3f.Y_AXIS)
+            }
+        }
+    }
+
+    addScene {
+        setupUiScene(ClearColorLoad)
+
+        hud.activePlayerIdFlow
+            .flatMapLatest { pid ->
+                server.players.map { map ->
+                    map[pid] ?: initialPlayerState(pid)
+                }
+            }
+            .onEach { player ->
+                hud.playerSnapShot.value = player
+            }
+            .launchIn(coroutineScope)
+
+        hud.activePlayerIdFlow
+            .flatMapLatest { pid ->
+                server.event.filter { it.playerId == pid }
+            }
+            .map { event ->
+                eventToText(event)
+            }
+            .onEach { line ->
+                hudLog(hud, "[${hud.activePlayerIdUi.value}] $line")
+            }
+            .launchIn(coroutineScope)
+
+        addPanelSurface {
+            modifier
+                .align(AlignmentX.Start, AlignmentY.Top)
+                .margin(16.dp)
+                .background(RoundRectBackground(Color(0f, 0f, 0f, 0.5f), 14.dp))
+                .padding(12.dp)
+
+            Column {
+                val player = hud.playerSnapShot.use()
+                val dialogue = buildAlchemistDialogue(player)
+
+                Text("Игрок: ${hud.activePlayerIdUi.use()}"){
+                    modifier.margin(bottom = sizes.gap)
+                }
+                Text("Позиция игрока: ${player.gridX} | ${player.gridZ}"){}
+                Text("Взгляд: ${player.facing}"){ modifier.font(sizes.smallText)}
+
+                Text("Квест: ${player.questState}") {  }
+                Text(currentObjective(player)) {modifier.font(sizes.smallText)}
+                Text(formatInventory(player)) { modifier.font(sizes.smallText) }
+                Text("Золото: ${player.gold}") { modifier.font(sizes.smallText) }
+                Text("Сундук залутан?: ${player.chestLooted} ") { modifier.font(sizes.smallText) }
+                Text("Дверь открыта?: ${player.doorOpened}") { modifier.font(sizes.smallText) }
+                Text("Память Npc: ${formatMemory(player.alchemistMemory)}") {
+                    modifier
+                        .font(sizes.smallText)
+                        .margin(bottom = sizes.gap)
+                }
+
+                Row{
+                    Button {  }
+                }
             }
         }
     }

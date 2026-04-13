@@ -544,16 +544,16 @@ fun main() = KoolApplication{
         // Запускаете подписку на players data (gold inventory) для активного игрока
         coroutineScope.launch {
             server.players.collect { map ->
-                val p = hud.activePlayerIdUi
-                // Получаете активного игрока id
-                if (map.values == null) map. else return@collect
-
-                // сохраняем игрока по его id из map если null возвращаем collect
-                val g = hud.gold
-                // присваиваем количество золота в hud состояние
-
-                val inventory = hud.inventoryText
-                // и присваиваем inventory к hud
+//                val p = hud.activePlayerIdUi
+//                // Получаете активного игрока id
+//                if (map.values == null) map. else return@collect
+//
+//                // сохраняем игрока по его id из map если null возвращаем collect
+//                val g = hud.gold
+//                // присваиваем количество золота в hud состояние
+//
+//                val inventory = hud.inventoryText
+//                // и присваиваем inventory к hud
                 // joinToString{} - превращает список элементов в одну строку
                 // Инвентарь если он не пуст достаточно вывести в формате Inventory: itemId(кол-во), itemId(кол-во)
             }
