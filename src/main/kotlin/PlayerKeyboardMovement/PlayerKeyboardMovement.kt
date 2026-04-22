@@ -5,26 +5,9 @@ import de.fabmax.kool.addScene
 import de.fabmax.kool.math.Vec3f
 import de.fabmax.kool.math.deg
 import de.fabmax.kool.modules.ksl.KslPbrShader
-import de.fabmax.kool.modules.ui2.AlignmentX
-import de.fabmax.kool.modules.ui2.AlignmentY
-import de.fabmax.kool.modules.ui2.Button
-import de.fabmax.kool.modules.ui2.Column
-import de.fabmax.kool.modules.ui2.RoundRectBackground
-import de.fabmax.kool.modules.ui2.Row
-import de.fabmax.kool.modules.ui2.Text
-import de.fabmax.kool.modules.ui2.addPanelSurface
-import de.fabmax.kool.modules.ui2.align
-import de.fabmax.kool.modules.ui2.background
-import de.fabmax.kool.modules.ui2.font
-import de.fabmax.kool.modules.ui2.margin
 import de.fabmax.kool.modules.ui2.mutableStateOf
-import de.fabmax.kool.modules.ui2.onClick
-import de.fabmax.kool.modules.ui2.padding
-import de.fabmax.kool.modules.ui2.setupUiScene
-import de.fabmax.kool.pipeline.ClearColorLoad
 import de.fabmax.kool.scene.addColorMesh
 import de.fabmax.kool.scene.defaultOrbitCamera
-import de.fabmax.kool.util.Color
 import de.fabmax.kool.util.Time
 
 import kotlinx.coroutines.launch
@@ -34,12 +17,6 @@ import kotlinx.coroutines.flow.MutableSharedFlow          // MutableSharedFlow -
 import kotlinx.coroutines.flow.SharedFlow                 // SharedFlow - только чтение состояния
 import kotlinx.coroutines.flow.asSharedFlow               // asSharedFlow() - отдать наружу только SharedFlow
 import kotlinx.coroutines.flow.asStateFlow                // asStateFlow() - отдать наружу только StateFlow
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onEach
-import questMarker.distance2d
 
 
 // Импорты библеотеки desktop Keyboard bridge (JVM) //
@@ -54,6 +31,7 @@ import java.awt.KeyboardFocusManager
 import java.awt.event.KeyEvent
 import kotlin.collections.filter
 import kotlin.collections.minByOrNull
+import kotlin.collections.plus
 
 // KeyEvent - событие нажатия какой-то клавиши
 // В нем хранятся:
@@ -476,14 +454,14 @@ sealed interface GameEvent{
 
 data class PlayerMoved(
     override val playerId: String,
-    val newGridX: Float,
-    val newGridZ: Float
+    val newWorldX: Float,
+    val newWorldZ: Float
 ): GameEvent
 
 data class MovementBlocked(
     override val playerId: String,
-    val blockedX: Float,
-    val blockedZ: Float
+    val blockedWorldX: Float,
+    val blockedWorldZ: Float
 ): GameEvent
 
 data class InteractedWithNpc(
@@ -794,6 +772,334 @@ class GameServer{
                 _events.emit(PlayerMoved(cmd.playerId, finalX, finalZ))
                 refreshDerivedState(cmd.playerId)
             }
+            is CmdInteract -> {
+                val p = getPlayer(cmd.playerId)
+                val target = pickInteractTarget(p)
+
+                if (target == null){
+                    _events.emit(ServerMessage(cmd.playerId, "Рядом нет объектов"))
+                    return
+                }
+
+                when(target.type){
+                    WorldObjectType.ALCHEMIST ->{
+                        val oldMemory = p.alchemistMemory
+                        val newMemory = oldMemory.copy(
+                            hasMet = true,
+                            timeTalked = oldMemory.timeTalked + 1
+                        )
+
+                        updatePlayer(cmd.playerId){p ->
+                            p.copy(alchemistMemory = newMemory)
+                        }
+                        _events.emit(InteractedWithNpc(cmd.playerId, target.id))
+                        _events.emit(NpcMemoryChanged(cmd.playerId, newMemory))
+                    }
+
+                    WorldObjectType.HERB_SOURCE -> {
+                        if (p.questState != QuestState.WAIT_HERB){
+                            _events.emit(ServerMessage(cmd.playerId, "Тебе сейчас незачем эта трава"))
+                            return
+                        }
+
+                        val oldCount = herbCount(p)
+                        val newCount = oldCount + 1
+                        val newInventory = p.inventory + ("herb" to newCount)
+
+                        updatePlayer(cmd.playerId){ p ->
+                            p.copy(inventory = newInventory)
+                        }
+
+                        _events.emit(InteractedWithHerbSource(cmd.playerId, target.id))
+                        _events.emit(InventoryChanged(cmd.playerId, "herb", newCount))
+                    }
+
+                    WorldObjectType.CHEST ->{
+                        if (p.questState != QuestState.GOOD_END){
+                            _events.emit(ServerMessage(cmd.playerId, "Сундук пока что закрыт"))
+                            return
+                        }
+
+                        if (p.chestLooted){
+                            _events.emit(ServerMessage(cmd.playerId, "Сундук уже открыт"))
+                            return
+                        }
+
+                        updatePlayer(cmd.playerId){ p ->
+                            p.copy(
+                                gold = p.gold + 20,
+                                chestLooted = true
+                            )
+                        }
+
+                        _events.emit(InteractedWithChest(cmd.playerId, target.id))
+                        _events.emit(ServerMessage(cmd.playerId, "Ты открыл сундук и получил 20 золота"))
+                        refreshDerivedState(cmd.playerId)
+                    }
+
+                    WorldObjectType.DOOR ->{
+                        if (p.questState != QuestState.GOOD_END){
+                            _events.emit(ServerMessage(cmd.playerId, "Дверь пока что закрыта"))
+                            return
+                        }
+
+                        if (p.doorOpened){
+                            _events.emit(ServerMessage(cmd.playerId, "Дверь уже открыта"))
+                            return
+                        }
+
+                        updatePlayer(cmd.playerId){ p ->
+                            p.copy(
+                                doorOpened = true
+                            )
+                        }
+
+                        _events.emit(InteractedWithDoor(cmd.playerId, target.id))
+                        _events.emit(ServerMessage(cmd.playerId, "Ты открыл дверь"))
+                        refreshDerivedState(cmd.playerId)
+                    }
+                }
+            }
+
+            is CmdChooseDialogueOption -> {
+                val p = getPlayer(cmd.playerId)
+
+                if (p.currentFocusId != "alchemist"){
+                    _events.emit(ServerMessage(cmd.playerId, "Сначала подойди к Алхимику"))
+                    return
+                }
+
+                when(cmd.optionId){
+                    "accept_help" -> {
+                        if (p.questState != QuestState.START){
+                            _events.emit(ServerMessage(cmd.playerId, "Путь пока не доступен, начни диалог"))
+                            return
+                        }
+
+                        updatePlayer(cmd.playerId){p ->
+                            p.copy(questState = QuestState.WAIT_HERB)
+                        }
+
+                        _events.emit(QuestStateChanged(cmd.playerId, QuestState.WAIT_HERB))
+                        _events.emit(ServerMessage(cmd.playerId, "Алхимик дал тебе задание с травой"))
+                    }
+                    "threat" -> {
+                        if (p.questState != QuestState.START){
+                            _events.emit(ServerMessage(cmd.playerId, "Сначала поговори"))
+                            return
+                        }
+
+                        updatePlayer(cmd.playerId){p ->
+                            p.copy(questState = QuestState.EVIL_END)
+                        }
+                    }
+                    "give_herb" -> {
+                        if (p.questState != QuestState.WAIT_HERB) return
+
+                        val herbs = herbCount(p)
+
+                        if (herbs < 3){
+                            return
+                        }
+
+                        val newCount = herbs - 3
+                        val newInventory = if (newCount <= 0) p.inventory - "herb" else p.inventory + ("herb" to newCount)
+
+                        val newMemory = p.alchemistMemory.copy(
+                            receivedHerb = true,
+
+                            )
+                        updatePlayer(cmd.playerId){p ->
+                            p.copy(
+                                inventory = newInventory,
+                                questState = QuestState.GOOD_END,
+                                alchemistMemory = newMemory
+                            )
+                        }
+
+                        _events.emit(InventoryChanged(cmd.playerId, "herb", newCount))
+                        _events.emit(NpcMemoryChanged(cmd.playerId, newMemory))
+                        _events.emit(QuestStateChanged(cmd.playerId, QuestState.GOOD_END))
+                        _events.emit(ServerMessage(cmd.playerId, "Квест Алхимика успешно завершен"))
+                    }
+                    else -> {
+                        _events.emit(ServerMessage(cmd.playerId, "Неизвестный вариант диалога"))
+                    }
+
+                }
+            }
+
+            is CmdResetPlayer -> {
+                updatePlayer(cmd.playerId) { _ -> initialPlayerState(cmd.playerId) }
+                _events.emit(ServerMessage(cmd.playerId, "Игрок сброшен до заводских настроек"))
+                refreshDerivedState(cmd.playerId)
+            }
+
+            is CmdTogglePinnedQuest -> {
+                updatePlayer(cmd.playerId){p ->
+                    p.copy(
+                        pinnedQuestEnabled = !p.pinnedQuestEnabled
+                    )
+                }
+
+                val after = getPlayer(cmd.playerId)
+                _events.emit(ServerMessage(cmd.playerId, "Pinned marker = ${after.pinnedQuestEnabled}"))
+                refreshDerivedState(cmd.playerId)
+            }
         }
+    }
+}
+
+class HudState{
+    val activePlayerIdFlow = MutableStateFlow("Oleg")
+    val activePlayerIdUi = mutableStateOf("Oleg")
+
+    val playerSnapShot = mutableStateOf(initialPlayerState("Oleg"))
+
+    val log = mutableStateOf<List<String>>(emptyList())
+}
+
+fun hudLog(hud: HudState, line: String){
+    hud.log.value = (hud.log.value + line).takeLast(20)
+}
+
+fun formatInventory(player: PlayerState): String{
+    return if (player.inventory.isEmpty()){
+        "Инвентарь: пуст"
+    }else{
+        "Инвентарь: " + player.inventory.entries.joinToString { "${it.key} x${it.value}"}
+    }
+}
+
+fun currentObjective(player: PlayerState): String{
+    val herbs = herbCount(player)
+
+    return when(player.questState){
+        QuestState.START -> "Подойди к алхимику"
+        QuestState.WAIT_HERB -> {
+            if (herbs < 3)"Собери 3 травы $herbs/3"
+            else "У тебя достаточно травы вернись к Хайзенбергу"
+        }
+        QuestState.GOOD_END -> "Квест завершен на хорошую концовку"
+        QuestState.EVIL_END -> "Квест завершен на плохую концовку"
+    }
+}
+
+fun formatMemory(memory: NpcMemory): String{
+    return "hasMet=${memory.hasMet}, talks=${memory.timeTalked}, receivedHerb=${memory.receivedHerb}"
+}
+
+fun eventToText(e: GameEvent): String{
+    return when(e){
+        is PlayerMoved -> "PlayerMoved x=${"%.2f".format(e.newWorldX)}, z=${"%.2f".format(e.newWorldZ)})"
+        is MovementBlocked -> "MovementBlocked x=${"%.2f".format(e.blockedWorldX)}, z=${"%.2f".format(e.blockedWorldZ)})"
+        is FocusChanged -> "FocusChanged ${e.newFocus}"
+        is PinnedTargetChange -> "PinnedTargetChange ${e.newTargetId}"
+        is InteractedWithChest -> "InteractedWithChest ${e.chestId}"
+        is InteractedWithDoor -> "InteractedWithDoor ${e.doorId}"
+        is InteractedWithNpc -> "InteractedWithNpc ${e.npcId}"
+        is InteractedWithHerbSource -> "InteractedWithHerbSource ${e.sourceId}"
+        is InventoryChanged -> "InventoryChanged ${e.itemId} to ${e.newCount}"
+        is QuestStateChanged -> "QuestStateChanged ${e.newState}"
+        is NpcMemoryChanged -> "NpcMemoryChanged ${e.memory}, Сколько раз поговорил = ${e.memory.timeTalked}, Отдал траву = ${e.memory.receivedHerb}"
+        is ServerMessage -> "Server ${e.text}"
+    }
+}
+
+fun main() = KoolApplication {
+    val hud = HudState()
+    val server = GameServer()
+
+    addScene{
+        defaultOrbitCamera()
+
+        for(x in -5..5){
+            for (z in -4..4){
+                addColorMesh {
+                    generate { cube { colored() } }
+
+                    shader = KslPbrShader{
+                        color { vertexColor() }
+                        metallic(0f)
+                        roughness(0.35f)
+                    }
+                }.transform.translate(x.toFloat(), -1.2f, z.toFloat())
+            }
+        }
+
+        val wallCells = listOf(
+            ObstacleDef(0f, 1f, 0.45f),
+            ObstacleDef(1f, 1f, 0.45f),
+            ObstacleDef(1f, 0f, 0.45f),
+            ObstacleDef(0f, -3f, 0.45f)
+        )
+
+        for (cell in wallCells){
+            addColorMesh {
+                generate { cube { colored() } }
+
+                shader = KslPbrShader{
+                    color { vertexColor() }
+                    metallic(0f)
+                    roughness(0.35f)
+                }
+            }.transform.translate(cell.centerX.toFloat(), 0f, cell.centerZ.toFloat())
+        }
+
+        val playerNode = addColorMesh {
+            generate { cube { colored() } }
+
+            shader = KslPbrShader{
+                color { vertexColor() }
+                metallic(0f)
+                roughness(0.15f)
+            }
+        }
+
+        val alchemistNode = addColorMesh {
+            generate { cube { colored() } }
+
+            shader = KslPbrShader{
+                color { vertexColor() }
+                metallic(0f)
+                roughness(0.15f)
+            }
+        }
+        alchemistNode.transform.translate(-3f,0f,0f)
+
+        val herbNode = addColorMesh {
+            generate { cube { colored() } }
+
+            shader = KslPbrShader{
+                color { vertexColor() }
+                metallic(0f)
+                roughness(0.15f)
+            }
+        }
+        herbNode.transform.translate(3f,0f,0f)
+
+        val chestNode = addColorMesh {
+            generate { cube { colored() } }
+
+            shader = KslPbrShader{
+                color { vertexColor() }
+                metallic(0f)
+                roughness(0.15f)
+            }
+        }
+        chestNode.transform.translate(1000f,0f,1000f)
+
+        val doorNode = addColorMesh {
+            generate { cube { colored() } }
+
+            shader = KslPbrShader{
+                color { vertexColor() }
+                metallic(0f)
+                roughness(0.15f)
+            }
+        }
+        doorNode.transform.translate(0f,0f,-3f)
+
+        server.start(coroutineScope)
     }
 }
