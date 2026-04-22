@@ -39,7 +39,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
-
+import questMarker.distance2d
 
 
 // Импорты библеотеки desktop Keyboard bridge (JVM) //
@@ -52,6 +52,8 @@ import java.awt.KeyboardFocusManager
 // Он нужен, чтобы добраться до системы ввода клавиатуры внутри активного окна windows например
 
 import java.awt.event.KeyEvent
+import kotlin.collections.filter
+import kotlin.collections.minByOrNull
 
 // KeyEvent - событие нажатия какой-то клавиши
 // В нем хранятся:
@@ -69,6 +71,8 @@ import kotlin.math.atan2
 // "если игрок идет вот втакую сторону, под каким углом он должен смотреть?"
 
 import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.sin
 // cos - косинус
 // Нужен для математики высчитывания направлений
 
@@ -472,14 +476,14 @@ sealed interface GameEvent{
 
 data class PlayerMoved(
     override val playerId: String,
-    val newGridX: Int,
-    val newGridZ: Int
+    val newGridX: Float,
+    val newGridZ: Float
 ): GameEvent
 
 data class MovementBlocked(
     override val playerId: String,
-    val blockedX: Int,
-    val blockedZ: Int
+    val blockedX: Float,
+    val blockedZ: Float
 ): GameEvent
 
 data class InteractedWithNpc(
@@ -532,3 +536,264 @@ data class PinnedTargetChange(
     override val playerId: String,
     val newTargetId: String?
 ): GameEvent
+
+class GameServer{
+    private val staticObstacles = listOf(
+        ObstacleDef(centerX = 0f, centerZ = 1f, halfSize = 0.45f),
+        ObstacleDef(centerX = 1f, centerZ = 1f, halfSize = 0.45f),
+        ObstacleDef(centerX = 1f, centerZ = 0f, halfSize = 0.45f),
+    )
+
+    private val doorObstacle = ObstacleDef(centerX = 0f, centerZ = -3f, halfSize = 0.45f)
+    // В закрытом состоянии дверь тоже препятствие
+
+    val worldObject = listOf(
+        WorldObjectDef(
+            "alchemist",
+            WorldObjectType.ALCHEMIST,
+            -3f,
+            0f,
+            1.3f
+        ),
+        WorldObjectDef(
+            "herb_source",
+            WorldObjectType.HERB_SOURCE,
+            3f,
+            0f,
+            1.7f
+        ),
+        WorldObjectDef(
+            "reward_chest",
+            WorldObjectType.CHEST,
+            0f,
+            3f,
+            1.3f
+        ),
+        WorldObjectDef(
+            "door",
+            WorldObjectType.DOOR,
+            0f,
+            -3f,
+            1.3f
+        )
+    )
+
+    private val _events = MutableSharedFlow<GameEvent>(extraBufferCapacity = 64)
+    val event: SharedFlow<GameEvent> = _events.asSharedFlow()
+
+    // Поток команд
+    private val  _commands = MutableSharedFlow<GameCommand>(extraBufferCapacity = 64)
+    val command: SharedFlow<GameCommand> = _commands.asSharedFlow()
+
+    fun trySend(cmd: GameCommand): Boolean = _commands.tryEmit(cmd)
+    // tryEmit - это быстрый способ отправить команду(без корутины)
+
+    private val _player = MutableStateFlow(
+        mapOf(
+            "Oleg" to initialPlayerState("Oleg"),
+            "Stas" to initialPlayerState("Stas")
+        )
+    )
+
+    val players: StateFlow<Map<String, PlayerState>> = _player.asStateFlow()
+
+    fun start(scope: kotlinx.coroutines.CoroutineScope){
+        // Сервер слушает команды и выполняет их
+
+        scope.launch {
+            command.collect{ cmd ->
+                progressCommand(cmd)
+            }
+        }
+    }
+
+    fun getPlayer(playerId: String): PlayerState {
+        return _player.value[playerId] ?: initialPlayerState(playerId)
+    }
+
+    fun updatePlayer(playerId: String, changed: (PlayerState) -> PlayerState){
+        val oldMap = _player.value
+        val oldPlayer = oldMap[playerId] ?: return
+
+        val newPlayer = changed(oldPlayer)
+
+        val newMap = oldMap.toMutableMap()
+        newMap[playerId] = newPlayer
+        _player.value = newMap.toMap()
+    }
+
+    private fun isPointInsideObstacle(x: Float, z: Float, obstacle: ObstacleDef, playerRadius: Float): Boolean{
+        // Отвечает на вопрос, если у игрока точка (x, z), то он задел препятствие или нет
+        return abs(x - obstacle.centerX) <= (obstacle.halfSize + playerRadius) &&
+                abs(z - obstacle.centerZ) <= (obstacle.halfSize + playerRadius)
+        // abs(x - obstacle.centerX) - определяет насколько мы далеко от центра препятствия по x
+        // obstacle.halfSize + playerRadius - допустимая граница касания
+        // Если в итоге и по x и по z он в опасной зоне - значит он задел препятствие
+    }
+
+    private fun isBlockedForPlayer(player: PlayerState, x: Float, z: Float): Boolean{
+        val playerRadius = 0.22f
+        // Толщина игрока
+
+        for (obstacle in staticObstacles){
+            if (isPointInsideObstacle(x, z, obstacle, playerRadius)) return  true
+        }
+
+        if (!player.doorOpened && isPointInsideObstacle(x, z, doorObstacle, playerRadius)){
+            return true
+        }
+
+        return false
+    }
+
+    private fun isObjectAvailableForPlayer(obj: WorldObjectDef, player: PlayerState): Boolean{
+        // Метод проверки, доступен ли тот ил иной обьект сейчас дял взаемодействия с игроком
+
+        return when(obj.type){
+            WorldObjectType.ALCHEMIST -> true
+            WorldObjectType.HERB_SOURCE -> true
+
+            WorldObjectType.DOOR -> true
+            WorldObjectType.CHEST -> player.questState == QuestState.GOOD_END && !player.chestLooted
+        }
+    }
+
+    private fun isObjectInFrontOfPlayer(player: PlayerState, obj: WorldObjectDef): Boolean{
+        // Проверка находится ли сейчас обьект перед игроком
+
+        val yawRad = Math.toRadians(player.yawDeg.toDouble())
+        // yawRad - угол взгляда игрока в градусах
+        // sin и cos работают в радианах, надо коректировать для работы с ними
+        val forwardX = sin(yawRad).toFloat()
+        val forwardZ = (-cos(yawRad).toFloat())
+        // Можно представить стрелу из груди персонажа, она показывает, куда смотрит игрока
+        // forwardX и forwardZ - координаты этой стрелы по плоскости
+
+        val toObjX = obj.worldX - player.worldX
+        val toObjZ = obj.worldZ - player.worldZ
+        // Это вектор от игрока к объекту, где находится объект относительно игрока
+
+        val dist = max(0.0001f, distance2d(player.worldX, player.worldZ, obj.worldX, obj.worldZ))
+        // Расстояние до объекта
+
+        val dirToObjX = toObjZ / dist
+        val dirToOdjZ = toObjZ / dist
+        // Нормализанное напрвление к объекту
+        // то есть в какую сторону он от нас находится без влияния длинны вектора
+
+        val dot = forwardX * dirToObjX + forwardZ * dirToOdjZ
+        // dot - скалярное произвидение
+        // на простом уровне:
+        // Эта цифра отвечает на вопрос: на сколько объект в переди?
+        // если объект прямо перед игроком: dot близок к 1
+        // Если объект сбоку: dot будет 0
+        // Если объект сзади: dot будет отрицательным
+
+        return dot > 0.45f
+        // если dot достаточно большой считаем что объект спереди
+        // 0.45f - это широкий конус перед игроком
+        // Если сделать 0.9 - придется смотреть пости идеально в центр
+        // Если сделать 0.1 будет слишком мягко срабатывать
+    }
+
+    private fun pickInteractTarget(player: PlayerState): WorldObjectDef?{
+        // Выбираем объект для взаемодействия
+        val candidates = worldObject.filter { obj ->
+            isObjectInFrontOfPlayer(player, obj)
+                    && distance2d(player.worldX, player.worldZ, obj.worldX, obj.worldZ) <= obj.interactRadius
+                    && isObjectInFrontOfPlayer(player, obj)
+        }
+        return candidates.minByOrNull { obj ->
+            distance2d(player.worldX, player.worldZ, obj.worldX, obj.worldZ)
+        }
+    }
+    private suspend fun refreshDerivedState(playerId: String){
+        // Пересчет вторичных состояний игрока
+        // втооричные - это те, что игрок не вводит напрямую, они выводятся яиз других данных
+        // Например:
+        // - focus object
+        // - active quest target
+        // - hint text
+
+        val player = getPlayer(playerId)
+        val target = pickInteractTarget(player)
+        val newFocusId = target?.id
+
+        val newPinnedTargetId = computePinnedTargetId(player)
+
+        val newHint =
+            when(newFocusId){
+                "alchemist" -> "E: Поговорить с алхимоком"
+                "herb_source" -> "E: Собрать траву"
+                "reward_chest" -> "E: Открыть сундук"
+                "door" -> "E: Открыть дверь"
+                else -> "WASD / Стрелки - движение, Е - взаемодействие"
+            }
+        val oldFocusId = player.currentFocusId
+        val oldPinnedId = player.pinnedTargetId
+
+        updatePlayer(playerId){ p ->
+            p.copy(
+                currentFocusId = newFocusId,
+                pinnedTargetId = newPinnedTargetId,
+                hintText = newHint
+            )
+            // copy - создает новую копию data class с изменяемыми полями
+            // Удобно и что главное - безопасный метод обновления состояния
+        }
+        if (oldFocusId != newFocusId){
+            _events.emit(FocusChanged(playerId, newFocusId))
+        }
+        if (oldPinnedId != newPinnedTargetId){
+            _events.emit(PinnedTargetChange(playerId, newPinnedTargetId))
+        }
+    }
+
+    private suspend fun progressCommand(cmd: GameCommand){
+        when(cmd){
+            is CmdMoveAxis -> {
+                val player = getPlayer(cmd.playerId)
+
+                val (dirX, dirZ) = normalizeOrZero(cmd.axisX, cmd.axisZ)
+                // Возвращает пару значений нормализованых x и z
+                if (dirX == 0f && dirZ == 0f){
+                    refreshDerivedState(cmd.playerId)
+                    return
+                }
+                val newYaw = computeYawDegDirection(dirX, dirZ)
+
+                val distance = player.moveSpeed * cmd.deltaSec
+                // Сколько игрок пройдет дистанции за этот кадр
+
+                val newX = player.worldX + dirX * distance
+                val newZ = player.worldZ + dirZ * distance
+                // куда игрок хочет пойти в следующем кадре
+
+                val canMoveX = !isBlockedForPlayer(player, newX,player.worldZ)
+                val canMoveZ = !isBlockedForPlayer(player, player.worldX, newZ)
+                // Двигаем игрока по координатам по отдельности
+
+                var finalX = player.worldX
+                var finalZ = player.worldZ
+
+                if (canMoveX) finalX = newX
+                if (canMoveZ) finalZ = newZ
+
+                if (!canMoveX && !canMoveZ){
+                    _events.emit(MovementBlocked(cmd.playerId, newX, newZ))
+                }
+
+                updatePlayer(cmd.playerId){ p ->
+                    p.copy(
+                        worldX = finalX,
+                        worldZ = finalZ,
+                        yawDeg = newYaw
+                    )
+                }
+
+                _events.emit(PlayerMoved(cmd.playerId, finalX, finalZ))
+                refreshDerivedState(cmd.playerId)
+            }
+        }
+    }
+}
