@@ -21,6 +21,7 @@ import de.fabmax.kool.modules.ui2.mutableStateOf
 import de.fabmax.kool.modules.ui2.onClick
 import de.fabmax.kool.modules.ui2.padding
 import de.fabmax.kool.modules.ui2.setupUiScene
+import de.fabmax.kool.modules.ui2.size
 import de.fabmax.kool.pipeline.ClearColorLoad
 import de.fabmax.kool.scene.addColorMesh
 import de.fabmax.kool.scene.defaultOrbitCamera
@@ -204,6 +205,8 @@ data class NpcMemory (
 
 data class PlayerState(
     val playerId: String,
+    val hp: Int,
+    val maxHp: Int,
 
     val worldX: Float,
     val worldZ: Float,
@@ -287,6 +290,8 @@ fun initialPlayerState(playerId: String): PlayerState{
     return if (playerId == "Stas"){
         PlayerState(
             "Stas",
+            100,
+            100,
             0f,
             0f,
             0f,
@@ -309,6 +314,8 @@ fun initialPlayerState(playerId: String): PlayerState{
     }else{
         PlayerState(
             "Oleg",
+            100,
+            100,
             0f,
             0f,
             0f,
@@ -471,6 +478,11 @@ data class CmdTogglePinnedQuest(
     override val playerId: String
 ): GameCommand
 
+data class CmdChangePlayerHp(
+    override val playerId: String,
+    val damage: Int
+): GameCommand
+
 sealed interface GameEvent{
     val playerId: String
 }
@@ -479,6 +491,11 @@ data class PlayerMoved(
     override val playerId: String,
     val newWorldX: Float,
     val newWorldZ: Float
+): GameEvent
+
+data class ChangePlayerHp(
+    override val playerId: String,
+    val newHp: Int
 ): GameEvent
 
 data class MovementBlocked(
@@ -969,6 +986,20 @@ class GameServer{
                 _events.emit(ServerMessage(cmd.playerId, "Pinned marker = ${after.pinnedQuestEnabled}"))
                 refreshDerivedState(cmd.playerId)
             }
+            is CmdChangePlayerHp -> {
+                val player = getPlayer(cmd.playerId)
+                val newHp = player.hp - cmd.damage
+
+                updatePlayer(cmd.playerId){p ->
+                    p.copy(
+                        hp = newHp
+                    )
+                }
+
+                _events.emit(ChangePlayerHp(cmd.playerId, newHp))
+                _events.emit(ServerMessage(cmd.playerId, "Получен урон: ${cmd.damage}, осталось Hp: $newHp"))
+                refreshDerivedState(cmd.playerId)
+            }
         }
     }
 }
@@ -1016,6 +1047,7 @@ fun eventToText(e: GameEvent): String{
     return when(e){
         is PlayerMoved -> "PlayerMoved x=${"%.2f".format(e.newWorldX)}, z=${"%.2f".format(e.newWorldZ)})"
         is MovementBlocked -> "MovementBlocked x=${"%.2f".format(e.blockedWorldX)}, z=${"%.2f".format(e.blockedWorldZ)})"
+        is ChangePlayerHp -> "ChangePlayerHp ${e.newHp}"
         is FocusChanged -> "FocusChanged ${e.newFocus}"
         is PinnedTargetChange -> "PinnedTargetChange ${e.newTargetId}"
         is InteractedWithChest -> "InteractedWithChest ${e.chestId}"
@@ -1260,7 +1292,41 @@ fun main() = KoolApplication {
             }
         }
         addPanelSurface {
-            
+            modifier.align(AlignmentX.End, AlignmentY.Bottom)
+                .margin(16.dp)
+                .background(RoundRectBackground(Color(0f, 0f, 0f, 0.5f), 14.dp))
+                .padding(12.dp)
+                .size(300.dp, 150.dp)
+
+
+            Column {
+                val player = hud.playerSnapShot.use()
+                Button("Нанести урон") {
+                    modifier.onClick {
+                        server.trySend(CmdChangePlayerHp(player.playerId, 15))
+                    }
+                }
+
+                Row {
+                    Text("HP:") {
+
+                        val newHp = player.hp
+                        val pilonsHp = player.maxHp / 10
+                        var hudBarFirstHalf = ""
+                        var hudBarSecondHalf = ""
+
+                        for(i in 0..(pilonsHp - newHp / 10)){
+                            hudBarSecondHalf += "░"
+                        }
+                        for(i in 0..newHp){
+                            hudBarFirstHalf += "█"
+                        }
+                        val allHud = hudBarFirstHalf + hudBarSecondHalf
+                        print(allHud)
+                    }
+                    modifier.margin(top = 30.dp)
+                }
+            }
         }
     }
 }
