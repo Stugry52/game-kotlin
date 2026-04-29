@@ -5,9 +5,26 @@ import de.fabmax.kool.addScene
 import de.fabmax.kool.math.Vec3f
 import de.fabmax.kool.math.deg
 import de.fabmax.kool.modules.ksl.KslPbrShader
+import de.fabmax.kool.modules.ui2.AlignmentX
+import de.fabmax.kool.modules.ui2.AlignmentY
+import de.fabmax.kool.modules.ui2.Button
+import de.fabmax.kool.modules.ui2.Column
+import de.fabmax.kool.modules.ui2.RoundRectBackground
+import de.fabmax.kool.modules.ui2.Row
+import de.fabmax.kool.modules.ui2.Text
+import de.fabmax.kool.modules.ui2.addPanelSurface
+import de.fabmax.kool.modules.ui2.align
+import de.fabmax.kool.modules.ui2.background
+import de.fabmax.kool.modules.ui2.font
+import de.fabmax.kool.modules.ui2.margin
 import de.fabmax.kool.modules.ui2.mutableStateOf
+import de.fabmax.kool.modules.ui2.onClick
+import de.fabmax.kool.modules.ui2.padding
+import de.fabmax.kool.modules.ui2.setupUiScene
+import de.fabmax.kool.pipeline.ClearColorLoad
 import de.fabmax.kool.scene.addColorMesh
 import de.fabmax.kool.scene.defaultOrbitCamera
+import de.fabmax.kool.util.Color
 import de.fabmax.kool.util.Time
 
 import kotlinx.coroutines.launch
@@ -17,6 +34,12 @@ import kotlinx.coroutines.flow.MutableSharedFlow          // MutableSharedFlow -
 import kotlinx.coroutines.flow.SharedFlow                 // SharedFlow - только чтение состояния
 import kotlinx.coroutines.flow.asSharedFlow               // asSharedFlow() - отдать наружу только SharedFlow
 import kotlinx.coroutines.flow.asStateFlow                // asStateFlow() - отдать наружу только StateFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+
 
 
 // Импорты библеотеки desktop Keyboard bridge (JVM) //
@@ -1101,5 +1124,143 @@ fun main() = KoolApplication {
         doorNode.transform.translate(0f,0f,-3f)
 
         server.start(coroutineScope)
+    }
+
+    addScene {
+        setupUiScene(ClearColorLoad)
+
+        hud.activePlayerIdFlow
+            .flatMapLatest { pid ->
+                server.players.map { map ->
+                    map[pid] ?: initialPlayerState(pid)
+                }
+            }
+            .onEach { player ->
+                hud.playerSnapShot.value = player
+            }
+            .launchIn(coroutineScope)
+
+        hud.activePlayerIdFlow
+            .flatMapLatest { pid ->
+                server.event.filter { it.playerId == pid }
+            }
+            .map { event ->
+                eventToText(event)
+            }
+            .onEach { line ->
+                hudLog(hud, "[${hud.activePlayerIdUi.value}] $line")
+            }
+            .launchIn(coroutineScope)
+
+        addPanelSurface {
+            modifier
+                .align(AlignmentX.Start, AlignmentY.Top)
+                .margin(16.dp)
+                .background(RoundRectBackground(Color(0f, 0f, 0f, 0.5f), 14.dp))
+                .padding(12.dp)
+
+            Column {
+                val player = hud.playerSnapShot.use()
+                val dialogue = buildAlchemistDialogue(player)
+
+                Text("Игрок: ${hud.activePlayerIdUi.use()}"){
+                    modifier.margin(bottom = sizes.gap)
+                }
+                Text("Позиция игрока: ${player.worldX} | ${player.worldZ}"){}
+                Text("Взгляд: ${player.yawDeg}"){ modifier.font(sizes.smallText)}
+
+                Text("Квест: ${player.questState}") {  }
+                Text(currentObjective(player)) {modifier.font(sizes.smallText)}
+                Text(formatInventory(player)) { modifier.font(sizes.smallText) }
+                Text("Золото: ${player.gold}") { modifier.font(sizes.smallText) }
+                Text("Сундук залутан?: ${player.chestLooted} ") { modifier.font(sizes.smallText) }
+                Text("Дверь открыта?: ${player.doorOpened}") { modifier.font(sizes.smallText) }
+                Text("Память Npc: ${formatMemory(player.alchemistMemory)}") {
+                    modifier
+                        .font(sizes.smallText)
+                        .margin(bottom = sizes.gap)
+                }
+
+                Row{
+                    Button("Сменить игрока") {
+                        modifier.margin(end = 8.dp).onClick{
+                            val newId = if (hud.activePlayerIdUi.value == "Oleg") "Stas" else "Oleg"
+
+                            hud.activePlayerIdUi.value = newId
+                            hud.activePlayerIdFlow.value = newId
+                        }
+                    }
+                }
+                Row {
+                    Button("Лево") {
+                        modifier.onClick {
+                            server.trySend(CmdMoveAxis(player.playerId,  -1f, 0f, 1f))
+                        }
+                    }
+                    Button("Право") {
+                        modifier.onClick {
+                            server.trySend(CmdMoveAxis(player.playerId, 1f, 0f, 1f))
+                        }
+                    }
+                    Button("Вперед") {
+                        modifier.onClick {
+                            server.trySend(CmdMoveAxis(player.playerId, 0f, -1f, 1f))
+                        }
+                    }
+                    Button("Назад") {
+                        modifier.onClick {
+                            server.trySend(CmdMoveAxis(player.playerId, 0f, 1f, 1f))
+                        }
+                    }
+                }
+                Text("Потрогать:") {
+                    modifier.margin(top = sizes.gap)
+                }
+
+                Button("Взаимодействие с ближайшим") {
+                    modifier.margin(end = 8.dp).onClick{
+                        server.trySend(CmdInteract(player.playerId))
+                    }
+                }
+                Text("${dialogue.npcName}:"){
+                    modifier.margin(top = sizes.gap)
+                }
+
+                Text(dialogue.text){
+                    modifier.margin(bottom = sizes.smallGap)
+                }
+
+                if (dialogue.options.isEmpty()){
+                    Text("(Сейчас доступных ответов нет)"){
+                        modifier.font(sizes.smallText).margin(bottom = sizes.gap)
+                    }
+                }else {
+                    Row {
+                        for (option in dialogue.options){
+                            Button(option.text) {
+                                modifier.margin(end = 8.dp).onClick{
+                                    server.trySend(
+                                        CmdChooseDialogueOption(player.playerId, option.id)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Text("Log:") {
+                    modifier.margin(top = sizes.gap)
+                }
+
+                for (line in hud.log.use()){
+                    Text(line){
+                        modifier.font(sizes.smallText)
+                    }
+                }
+            }
+        }
+        addPanelSurface {
+            
+        }
     }
 }
