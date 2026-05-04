@@ -7,6 +7,7 @@ import de.fabmax.kool.math.deg
 import de.fabmax.kool.modules.ksl.KslPbrShader
 import de.fabmax.kool.modules.ui2.AlignmentX
 import de.fabmax.kool.modules.ui2.AlignmentY
+import de.fabmax.kool.modules.ui2.Box
 import de.fabmax.kool.modules.ui2.Button
 import de.fabmax.kool.modules.ui2.Column
 import de.fabmax.kool.modules.ui2.RoundRectBackground
@@ -207,6 +208,7 @@ data class PlayerState(
     val playerId: String,
     val hp: Int,
     val maxHp: Int,
+    val isAlive: Boolean,
 
     val worldX: Float,
     val worldZ: Float,
@@ -292,6 +294,7 @@ fun initialPlayerState(playerId: String): PlayerState{
             "Stas",
             100,
             100,
+            true,
             0f,
             0f,
             0f,
@@ -316,6 +319,7 @@ fun initialPlayerState(playerId: String): PlayerState{
             "Oleg",
             100,
             100,
+            true,
             0f,
             0f,
             0f,
@@ -478,10 +482,15 @@ data class CmdTogglePinnedQuest(
     override val playerId: String
 ): GameCommand
 
-data class CmdChangePlayerHp(
+data class CmdTakeDamage(
     override val playerId: String,
     val damage: Int
 ): GameCommand
+data class CmdTakeHeal(
+    override val playerId: String,
+    val heal: Int
+): GameCommand
+///
 
 sealed interface GameEvent{
     val playerId: String
@@ -496,6 +505,11 @@ data class PlayerMoved(
 data class ChangePlayerHp(
     override val playerId: String,
     val newHp: Int
+): GameEvent
+
+data class PlayerWasDie(
+    override val playerId: String,
+    val dieText: String
 ): GameEvent
 
 data class MovementBlocked(
@@ -986,7 +1000,7 @@ class GameServer{
                 _events.emit(ServerMessage(cmd.playerId, "Pinned marker = ${after.pinnedQuestEnabled}"))
                 refreshDerivedState(cmd.playerId)
             }
-            is CmdChangePlayerHp -> {
+            is CmdTakeDamage -> {
                 val player = getPlayer(cmd.playerId)
                 val newHp = player.hp - cmd.damage
 
@@ -996,8 +1010,34 @@ class GameServer{
                     )
                 }
 
+                if (newHp <= 0){
+                    val dieHp = 0
+                    val isDead = false
+                    updatePlayer(cmd.playerId){p ->
+                        p.copy(
+                            hp = dieHp,
+                            isAlive = isDead
+                        )
+                    }
+                    _events.emit(PlayerWasDie(cmd.playerId, "Вы потеряли всё Hp"))
+                }
+
                 _events.emit(ChangePlayerHp(cmd.playerId, newHp))
                 _events.emit(ServerMessage(cmd.playerId, "Получен урон: ${cmd.damage}, осталось Hp: $newHp"))
+                refreshDerivedState(cmd.playerId)
+            }
+            is CmdTakeHeal -> {
+                val player = getPlayer(cmd.playerId)
+                val newHp = player.hp + cmd.heal
+
+                updatePlayer(cmd.playerId){p ->
+                    p.copy(
+                        hp = newHp
+                    )
+                }
+
+                _events.emit(ChangePlayerHp(cmd.playerId, newHp))
+                _events.emit(ServerMessage(cmd.playerId, "Получен урон: ${cmd.heal}, осталось Hp: $newHp"))
                 refreshDerivedState(cmd.playerId)
             }
         }
@@ -1009,6 +1049,10 @@ class HudState{
     val activePlayerIdUi = mutableStateOf("Oleg")
 
     val playerSnapShot = mutableStateOf(initialPlayerState("Oleg"))
+
+    val hp = mutableStateOf(100)
+    val maxHp = 100
+    val isAlive = mutableStateOf(true)
 
     val log = mutableStateOf<List<String>>(emptyList())
 }
@@ -1048,6 +1092,7 @@ fun eventToText(e: GameEvent): String{
         is PlayerMoved -> "PlayerMoved x=${"%.2f".format(e.newWorldX)}, z=${"%.2f".format(e.newWorldZ)})"
         is MovementBlocked -> "MovementBlocked x=${"%.2f".format(e.blockedWorldX)}, z=${"%.2f".format(e.blockedWorldZ)})"
         is ChangePlayerHp -> "ChangePlayerHp ${e.newHp}"
+        is PlayerWasDie -> "PlayerWasDie ${e.dieText}"
         is FocusChanged -> "FocusChanged ${e.newFocus}"
         is PinnedTargetChange -> "PinnedTargetChange ${e.newTargetId}"
         is InteractedWithChest -> "InteractedWithChest ${e.chestId}"
@@ -1301,30 +1346,80 @@ fun main() = KoolApplication {
 
             Column {
                 val player = hud.playerSnapShot.use()
-                Button("Нанести урон") {
-                    modifier.onClick {
-                        server.trySend(CmdChangePlayerHp(player.playerId, 15))
+
+                coroutineScope.launch {
+                    server.event.collect { event ->
+                        when (event){
+                            is ChangePlayerHp -> "Hp игрока ${event.playerId} изменилось на ${event.newHp}"
+                            is PlayerWasDie -> "Игрок ${event.playerId} помер"
+                            else -> "Нет события"
+                        }
+                    }
+                }
+
+                coroutineScope.launch {
+                    server.players.collect { playerMap ->
+                        val pid = hud.activePlayerIdUi.value
+                        val player = playerMap[pid] ?: return@collect
+
+                        hud.hp.value = player.hp
+                        hud.isAlive.value = player.isAlive
+
+                    }
+                }
+                Row {
+                    Button("Нанести урон") {
+                        modifier.onClick {
+                            server.trySend(CmdTakeDamage(player.playerId, 15))
+                        }
+                    }
+                    Button("Получить лечение") {
+                        modifier.onClick {
+                            server.trySend(CmdTakeHeal(player.playerId, 15))
+                        }
                     }
                 }
 
                 Row {
-                    Text("HP:") {
 
-                        val newHp = player.hp
-                        val pilonsHp = player.maxHp / 10
-                        var hudBarFirstHalf = ""
-                        var hudBarSecondHalf = ""
-
-                        for(i in 0..(pilonsHp - newHp / 10)){
-                            hudBarSecondHalf += "░"
-                        }
-                        for(i in 0..newHp){
-                            hudBarFirstHalf += "█"
-                        }
-                        val allHud = hudBarFirstHalf + hudBarSecondHalf
-                        print(allHud)
-                    }
+                    Text("HP: " ) {}
                     modifier.margin(top = 30.dp)
+
+                    Box {
+                        var red = 0f
+                        var green = 0f
+
+                        if (hud.hp.value > 70 ){
+                            green = 128f
+                        }else if ((hud.hp.value <= 70) and (hud.hp.value >= 35)){
+                            red = 255f
+                            green = 255f
+                        }else{
+                            red = 255f
+                        }
+                        val width = hud.hp.value * 2
+                        modifier
+                            .margin(16.dp)
+                            .padding(12.dp)
+                            .size(width.dp, 40.dp)
+                            .background(RoundRectBackground(Color(red, green, 0f, 0.5f), 14.dp))
+                    }
+
+                }
+                if (hud.isAlive.value.equals(false)){
+                    addPanelSurface {
+                        modifier
+                            .align(AlignmentX.Center, AlignmentY.Center)
+                            .margin(16.dp)
+                            .background(RoundRectBackground(Color(0f, 0f, 0f, 0.5f), 14.dp))
+                            .padding(12.dp)
+
+                        Text("Вы погибли") {
+                            modifier
+                                .font(sizes.largeText)
+                                .align(AlignmentX.Center, AlignmentY.Bottom, )
+                        }
+                    }
                 }
             }
         }
