@@ -236,6 +236,7 @@ fun handleInteract(game: GameState, focused: WorldObject?){
     }
 
     when(focused.type){
+
         WorldObjectType.NPC -> {
             when(game.questState.value){
                 QuestStage.NOT_STARTED -> {
@@ -248,11 +249,13 @@ fun handleInteract(game: GameState, focused: WorldObject?){
                 }
 
                 QuestStage.TALK_TO_NPC -> {
+
                     var timesToTalk = 0
 
                     val randomTextNumber = randomI(1, 3)
 
                     if (!game.chestOpened.value){
+                        timesToTalk++
                         when(timesToTalk){
                             0 -> { game.dialogueText.value = "[Алхимик]: сначала открой сундук"
 
@@ -265,8 +268,6 @@ fun handleInteract(game: GameState, focused: WorldObject?){
                             }
 
                         }
-                        timesToTalk++
-
 
                         pushLog(game, "NPC напомнил про сундук")
                     } else{
@@ -285,6 +286,7 @@ fun handleInteract(game: GameState, focused: WorldObject?){
         WorldObjectType.CHEST -> {
             var changeToOpenChest = 0
             if (game.questState.value == QuestStage.NOT_STARTED){
+                changeToOpenChest++
                 if (changeToOpenChest == 50){
                     game.dialogueText.value = "Ты умудрился его отрыть сломав замок"
                     pushLog(game, "Сундук открыт")
@@ -292,7 +294,6 @@ fun handleInteract(game: GameState, focused: WorldObject?){
                 }
                 game.dialogueText.value = "Сундук закрыт, возьми ключ у Алхимика"
                 pushLog(game, "Попытка открыть сундук, без ключа")
-                changeToOpenChest++
                 return
             }
             if (game.chestOpened.value){
